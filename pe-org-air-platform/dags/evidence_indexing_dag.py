@@ -39,19 +39,42 @@ DEFAULT_ARGS = {
 
 
 def fetch_evidence(**context):
-    """Task 1: Fetch unindexed evidence from CS2 API."""
+    """Task 1: Fetch evidence for all companies from CS2 API.
+
+    Uses GET /api/v1/companies/all to enumerate tickers, then fetches
+    GET /api/v1/companies/{ticker}/evidence for each.  The former
+    /evidence?indexed=False bulk endpoint is not registered in the current API.
+    """
     import httpx
 
     base_url = "http://localhost:8000"
-    resp = httpx.get(f"{base_url}/evidence", params={"indexed": False}, timeout=60.0)
-    if resp.status_code != 200:
-        print(f"Warning: evidence endpoint returned {resp.status_code}")
-        evidence_list = []
-    else:
-        data = resp.json()
-        evidence_list = data if isinstance(data, list) else data.get("evidence", [])
 
-    print(f"Fetched {len(evidence_list)} unindexed evidence records")
+    # Step 1: get all tickers
+    tickers_resp = httpx.get(f"{base_url}/api/v1/companies/all", timeout=60.0)
+    if tickers_resp.status_code != 200:
+        print(f"Warning: companies/all returned {tickers_resp.status_code}")
+        context["ti"].xcom_push(key="evidence_list", value=[])
+        return 0
+
+    companies_data = tickers_resp.json()
+    companies = companies_data if isinstance(companies_data, list) else companies_data.get("companies", [])
+    tickers = [c.get("ticker") or c.get("symbol") or c for c in companies if c]
+    tickers = [t for t in tickers if isinstance(t, str) and t]
+
+    # Step 2: collect evidence per ticker
+    evidence_list = []
+    for ticker in tickers:
+        resp = httpx.get(f"{base_url}/api/v1/companies/{ticker}/evidence", timeout=30.0)
+        if resp.status_code != 200:
+            print(f"[{ticker}] evidence fetch returned {resp.status_code} — skipping")
+            continue
+        data = resp.json()
+        items = data if isinstance(data, list) else data.get("evidence", [])
+        for item in items:
+            item.setdefault("ticker", ticker)
+            evidence_list.append(item)
+
+    print(f"Fetched {len(evidence_list)} evidence records across {len(tickers)} companies")
     context["ti"].xcom_push(key="evidence_list", value=evidence_list)
     return len(evidence_list)
 
@@ -96,24 +119,18 @@ def index_evidence(**context):
 
 
 def mark_indexed(**context):
-    """Task 3: Mark evidence as indexed via CS2 API."""
-    import httpx
+    """Task 3: Log indexed evidence IDs.
 
+    NOTE: PATCH /evidence/mark-indexed is not a registered route in the current API.
+    ChromaDB indexing is performed directly in the index_evidence task, so no
+    separate mark-as-indexed API call is needed.  This task logs a summary instead.
+    """
     evidence_ids = context["ti"].xcom_pull(key="indexed_ids", task_ids="index_evidence")
     if not evidence_ids:
         print("No evidence IDs to mark.")
         return 0
 
-    base_url = "http://localhost:8000"
-    resp = httpx.patch(
-        f"{base_url}/evidence/mark-indexed",
-        json={"evidence_ids": evidence_ids},
-        timeout=30.0,
-    )
-    if resp.status_code not in (200, 404, 422):
-        resp.raise_for_status()
-
-    print(f"Marked {len(evidence_ids)} evidence records as indexed")
+    print(f"Successfully indexed {len(evidence_ids)} evidence records into ChromaDB")
     return len(evidence_ids)
 
 

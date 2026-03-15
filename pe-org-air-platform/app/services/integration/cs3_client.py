@@ -378,7 +378,12 @@ class CS3Client:
     def get_rubric(
         self, dimension: str, level: Optional[int] = None
     ) -> List[RubricCriteria]:
-        """Fetch rubric criteria for a dimension (optionally filtered by level)."""
+        """Fetch rubric criteria for a dimension (optionally filtered by level).
+
+        NOTE: /api/v1/scoring/rubrics is not a registered route in the current API.
+        The HTTP call will 404 and this method always falls back to the local static
+        rubric data defined in _default_rubric().
+        """
         params: dict = {"dimension": dimension}
         if level is not None:
             params["level"] = level

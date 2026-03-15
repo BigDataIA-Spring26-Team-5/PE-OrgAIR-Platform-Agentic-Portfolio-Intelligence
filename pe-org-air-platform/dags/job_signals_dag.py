@@ -60,7 +60,13 @@ def fetch_companies(**context):
 
 
 def score_hiring_signals(**context):
-    """Task 2: Call hiring signal endpoint for each company ticker."""
+    """Task 2: Trigger technology_hiring signal collection for each company ticker.
+
+    Uses POST /api/v1/signals/collect (the registered endpoint) instead of the
+    former /api/v1/signals/score/{ticker}/hiring which no longer exists.
+    Collection runs asynchronously on the API side; this task fires-and-forgets
+    a collection request per ticker and records the task_id for each.
+    """
     import httpx
 
     tickers = context["ti"].xcom_pull(key="tickers", task_ids="fetch_companies")
@@ -75,8 +81,12 @@ def score_hiring_signals(**context):
     for ticker in tickers:
         try:
             resp = httpx.post(
-                f"{base_url}/api/v1/signals/score/{ticker}/hiring",
-                timeout=300.0,
+                f"{base_url}/api/v1/signals/collect",
+                json={
+                    "company_id": ticker,
+                    "categories": ["technology_hiring"],
+                },
+                timeout=60.0,
             )
             if resp.status_code != 200:
                 print(f"[{ticker}] HTTP {resp.status_code} — skipping")
@@ -84,48 +94,39 @@ def score_hiring_signals(**context):
                 continue
 
             data = resp.json()
-            status = data.get("status")
-
-            if status == "skipped":
-                print(f"[{ticker}] Already scored today — skipping")
-                results[ticker] = data.get("score")
-            elif status == "success":
-                score = data.get("score")
-                results[ticker] = score
-                print(f"[{ticker}] score={score:.4f}" if score is not None else f"[{ticker}] score=None")
-            else:
-                print(f"[{ticker}] status={status} error={data.get('error')}")
-                results[ticker] = None
+            task_id = data.get("task_id")
+            results[ticker] = task_id
+            print(f"[{ticker}] collection queued, task_id={task_id}")
 
         except Exception as exc:
             print(f"[{ticker}] Exception: {exc}")
             results[ticker] = None
 
-    scored = sum(1 for v in results.values() if v is not None)
-    print(f"Scored {scored}/{len(tickers)} tickers successfully")
+    queued = sum(1 for v in results.values() if v is not None)
+    print(f"Queued {queued}/{len(tickers)} tickers successfully")
     context["ti"].xcom_push(key="hiring_results", value=results)
-    return scored
+    return queued
 
 
 def log_summary(**context):
-    """Task 3: Print per-ticker scores and a pipeline summary line."""
+    """Task 3: Print per-ticker collection task_ids and a pipeline summary line."""
     results = context["ti"].xcom_pull(key="hiring_results", task_ids="score_hiring_signals")
     if not results:
         print("No hiring results to summarize.")
         return
 
     print("=" * 60)
-    print("HIRING SIGNAL SCORES")
+    print("HIRING SIGNAL COLLECTION TASKS")
     print("=" * 60)
-    for ticker, score in sorted(results.items()):
-        score_str = f"{score:.4f}" if score is not None else "N/A"
-        print(f"  {ticker:<10} {score_str}")
+    for ticker, task_id in sorted(results.items()):
+        task_str = task_id if task_id is not None else "FAILED"
+        print(f"  {ticker:<10} {task_str}")
 
     total = len(results)
-    scored = sum(1 for v in results.values() if v is not None)
-    failed = total - scored
+    queued = sum(1 for v in results.values() if v is not None)
+    failed = total - queued
     print("=" * 60)
-    print(f"SUMMARY: {scored}/{total} scored, {failed} failed/skipped")
+    print(f"SUMMARY: {queued}/{total} queued, {failed} failed/skipped")
     print("=" * 60)
 
 

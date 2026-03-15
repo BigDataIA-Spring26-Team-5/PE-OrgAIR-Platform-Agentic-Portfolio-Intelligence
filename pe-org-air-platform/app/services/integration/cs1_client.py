@@ -130,7 +130,7 @@ class CS1Client:
     """Fetches company metadata from CS1 API endpoints."""
 
     def __init__(self, base_url: str = "http://localhost:8000"):
-        self.base_url = base_url.rstrip("/")
+        self.base_url = base_url.rstrip("/") + "/api/v1"
         self._client = httpx.AsyncClient(timeout=30.0)
 
     async def get_company(self, ticker: str) -> Optional[Company]:
@@ -160,9 +160,10 @@ class CS1Client:
         return [self._parse_company(c) for c in companies]
 
     async def get_portfolio_companies(self, portfolio_id: str) -> List[Company]:
-        """Get companies belonging to a specific portfolio."""
+        """Get companies filtered by portfolio_id via the companies list endpoint."""
         resp = await self._client.get(
-            f"{self.base_url}/portfolios/{portfolio_id}/companies",
+            f"{self.base_url}/companies",
+            params={"portfolio_id": portfolio_id},
         )
         resp.raise_for_status()
         data = resp.json()

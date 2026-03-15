@@ -96,7 +96,7 @@ class ScoringRepository(BaseRepository):
 
     def upsert_mapping_matrix(self, rows: List[Dict]) -> int:
         """
-        Upsert the full mapping matrix for a ticker.
+        Upsert the full mapping matrix for a ticker using one shared connection.
 
         Args:
             rows: Output of EvidenceMapper.build_mapping_matrix()
@@ -104,23 +104,66 @@ class ScoringRepository(BaseRepository):
         Returns:
             Number of rows upserted
         """
+        if not rows:
+            return 0
+        sql = """
+        MERGE INTO signal_dimension_mapping t
+        USING (SELECT %s AS ticker, %s AS source) s
+        ON t.ticker = s.ticker AND t.source = s.source
+        WHEN MATCHED THEN UPDATE SET
+            raw_score = %s,
+            confidence = %s,
+            evidence_count = %s,
+            data_infrastructure = %s,
+            ai_governance = %s,
+            technology_stack = %s,
+            talent_skills = %s,
+            leadership_vision = %s,
+            use_case_portfolio = %s,
+            culture_change = %s,
+            created_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN INSERT (
+            id, ticker, source, raw_score, confidence, evidence_count,
+            data_infrastructure, ai_governance, technology_stack,
+            talent_skills, leadership_vision, use_case_portfolio, culture_change,
+            created_at
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s, %s,
+            CURRENT_TIMESTAMP()
+        )
+        """
         count = 0
-        for row in rows:
-            self.upsert_mapping_row(
-                ticker=row["ticker"],
-                source=row["source"],
-                raw_score=row.get("raw_score"),
-                confidence=row.get("confidence"),
-                evidence_count=row.get("evidence_count", 0),
-                data_infrastructure=row.get("data_infrastructure"),
-                ai_governance=row.get("ai_governance"),
-                technology_stack=row.get("technology_stack"),
-                talent_skills=row.get("talent_skills"),
-                leadership_vision=row.get("leadership_vision"),
-                use_case_portfolio=row.get("use_case_portfolio"),
-                culture_change=row.get("culture_change"),
-            )
-            count += 1
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            try:
+                for row in rows:
+                    row_id = str(uuid4())
+                    params = (
+                        row["ticker"].upper(), row["source"],
+                        # UPDATE values
+                        row.get("raw_score"), row.get("confidence"), row.get("evidence_count", 0),
+                        row.get("data_infrastructure"), row.get("ai_governance"),
+                        row.get("technology_stack"), row.get("talent_skills"),
+                        row.get("leadership_vision"), row.get("use_case_portfolio"),
+                        row.get("culture_change"),
+                        # INSERT values
+                        row_id, row["ticker"].upper(), row["source"],
+                        row.get("raw_score"), row.get("confidence"), row.get("evidence_count", 0),
+                        row.get("data_infrastructure"), row.get("ai_governance"),
+                        row.get("technology_stack"), row.get("talent_skills"),
+                        row.get("leadership_vision"), row.get("use_case_portfolio"),
+                        row.get("culture_change"),
+                    )
+                    cur.execute(sql, params)
+                    count += 1
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                raise
+            finally:
+                cur.close()
         logger.info(f"Upserted {count} mapping rows for {rows[0]['ticker'] if rows else '?'}")
         return count
 
@@ -251,7 +294,7 @@ class ScoringRepository(BaseRepository):
 
     def upsert_dimension_scores(self, rows: List[Dict]) -> int:
         """
-        Upsert all 7 dimension scores for a ticker.
+        Upsert all 7 dimension scores for a ticker using one shared connection.
 
         Args:
             rows: Output of EvidenceMapper.build_dimension_summary()
@@ -259,18 +302,49 @@ class ScoringRepository(BaseRepository):
         Returns:
             Number of rows upserted
         """
+        if not rows:
+            return 0
+        sql = """
+        MERGE INTO evidence_dimension_scores t
+        USING (SELECT %s AS ticker, %s AS dimension) s
+        ON t.ticker = s.ticker AND t.dimension = s.dimension
+        WHEN MATCHED THEN UPDATE SET
+            score = %s,
+            confidence = %s,
+            source_count = %s,
+            sources = %s,
+            total_weight = %s,
+            created_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN INSERT (
+            id, ticker, dimension, score, confidence, source_count, sources, total_weight, created_at
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP()
+        )
+        """
         count = 0
-        for row in rows:
-            self.upsert_dimension_score(
-                ticker=row["ticker"],
-                dimension=row["dimension"],
-                score=row["score"],
-                confidence=row["confidence"],
-                source_count=row["source_count"],
-                sources=row["sources"],
-                total_weight=row["total_weight"],
-            )
-            count += 1
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            try:
+                for row in rows:
+                    row_id = str(uuid4())
+                    params = (
+                        row["ticker"].upper(), row["dimension"],
+                        # UPDATE values
+                        row["score"], row["confidence"], row["source_count"],
+                        row["sources"], row["total_weight"],
+                        # INSERT values
+                        row_id, row["ticker"].upper(), row["dimension"],
+                        row["score"], row["confidence"], row["source_count"],
+                        row["sources"], row["total_weight"],
+                    )
+                    cur.execute(sql, params)
+                    count += 1
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                raise
+            finally:
+                cur.close()
         logger.info(f"Upserted {count} dimension scores for {rows[0]['ticker'] if rows else '?'}")
         return count
 

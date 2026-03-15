@@ -360,8 +360,15 @@ class ScoringService:
         evidence = []
         details = {}
 
+        # One Snowflake connection for all three SEC section lookups
+        s3_keys_by_section = get_chunk_repository().get_s3_keys_for_section_map(
+            ticker, self.SEC_SECTION_MAP
+        )
+
         for signal_source_key, section_names in self.SEC_SECTION_MAP.items():
-            section_text = self._get_section_text(ticker, section_names)
+            section_text = self._get_section_text(
+                ticker, section_names, s3_keys=s3_keys_by_section.get(signal_source_key)
+            )
 
             # ── GE FIX: fallback to ALL chunks if section text too short ──
             # GE Aerospace's 10-K chunks may have NULL or non-standard
@@ -430,9 +437,15 @@ class ScoringService:
 
         return evidence, details
 
-    def _get_section_text(self, ticker: str, section_names: List[str]) -> Optional[str]:
+    def _get_section_text(
+        self,
+        ticker: str,
+        section_names: List[str],
+        s3_keys: Optional[List[str]] = None,
+    ) -> Optional[str]:
         """Get concatenated section text from S3 chunk files."""
-        s3_keys = get_chunk_repository().get_s3_keys_by_sections(ticker, section_names)
+        if s3_keys is None:
+            s3_keys = get_chunk_repository().get_s3_keys_by_sections(ticker, section_names)
 
         if not s3_keys:
             return None

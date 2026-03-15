@@ -1099,20 +1099,15 @@ class CompositeScoringService:
         repo = get_composite_scoring_repo()
 
         try:
-            tc = result.talent_concentration
-            vr = result.vr_result.vr_score if result.vr_result else None
-            repo.upsert_scoring_table(ticker, tc=tc, vr=vr)
-            logger.info(f"[{ticker}] SCORING table upserted: TC={tc}, VR={vr}")
-        except Exception as e:
-            logger.warning(f"[{ticker}] Snowflake SCORING upsert failed (non-fatal): {e}")
-
-        try:
             bd = result.tc_breakdown
             ja = result.job_analysis
             val = result.validation
-            repo.upsert_tc_result(
-                ticker,
+            vr_r = result.vr_result
+            dims = result.dimension_scores or {}
+            repo.upsert_tc_vr_batch(
+                ticker=ticker,
                 tc=result.talent_concentration,
+                vr=vr_r.vr_score if vr_r else None,
                 leadership_ratio=bd.leadership_ratio if bd else None,
                 team_size_factor=bd.team_size_factor if bd else None,
                 skill_concentration=bd.skill_concentration if bd else None,
@@ -1127,21 +1122,9 @@ class CompositeScoringService:
                 ai_mentions=result.ai_mentions,
                 tc_in_range=val.tc_in_range if val else None,
                 tc_expected=val.tc_expected if val else None,
-            )
-            logger.info(f"[{ticker}] TC_SCORING table upserted")
-        except Exception as e:
-            logger.warning(f"[{ticker}] TC_SCORING upsert failed (non-fatal): {e}")
-
-        try:
-            vr_r = result.vr_result
-            val = result.validation
-            dims = result.dimension_scores or {}
-            repo.upsert_vr_result(
-                ticker,
                 vr_score=vr_r.vr_score if vr_r else None,
                 weighted_dim_score=vr_r.weighted_dim_score if vr_r else None,
                 talent_risk_adj=vr_r.talent_risk_adj if vr_r else None,
-                tc_used=result.talent_concentration,
                 dim_data_infra=dims.get("data_infrastructure"),
                 dim_ai_gov=dims.get("ai_governance"),
                 dim_tech_stack=dims.get("technology_stack"),
@@ -1152,9 +1135,9 @@ class CompositeScoringService:
                 vr_in_range=val.vr_in_range if val else None,
                 vr_expected=val.vr_expected if val else None,
             )
-            logger.info(f"[{ticker}] VR_SCORING table upserted")
+            logger.info(f"[{ticker}] SCORING + TC_SCORING + VR_SCORING upserted")
         except Exception as e:
-            logger.warning(f"[{ticker}] VR_SCORING upsert failed (non-fatal): {e}")
+            logger.warning(f"[{ticker}] TC+VR Snowflake upsert failed (non-fatal): {e}")
 
     def _save_pf(self, result: PFResponse) -> None:
         """Save PF result to S3 and upsert into SCORING and PF_SCORING."""

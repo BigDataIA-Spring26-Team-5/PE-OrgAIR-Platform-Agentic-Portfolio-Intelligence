@@ -226,6 +226,148 @@ class CompositeScoringRepository(BaseRepository):
     # WRITE — upsert into VR_SCORING
     # =====================================================================
 
+    # =====================================================================
+    # WRITE — batch: SCORING + TC_SCORING + VR_SCORING in one connection
+    # =====================================================================
+
+    def upsert_tc_vr_batch(
+        self,
+        ticker: str,
+        tc: Optional[float],
+        vr: Optional[float],
+        leadership_ratio: Optional[float],
+        team_size_factor: Optional[float],
+        skill_concentration: Optional[float],
+        individual_factor: Optional[float],
+        total_ai_jobs: Optional[int],
+        senior_ai_jobs: Optional[int],
+        mid_ai_jobs: Optional[int],
+        entry_ai_jobs: Optional[int],
+        unique_skills_cnt: Optional[int],
+        individual_mentions: Optional[int],
+        review_count: Optional[int],
+        ai_mentions: Optional[int],
+        tc_in_range: Optional[bool],
+        tc_expected: Optional[str],
+        vr_score: Optional[float],
+        weighted_dim_score: Optional[float],
+        talent_risk_adj: Optional[float],
+        dim_data_infra: Optional[float],
+        dim_ai_gov: Optional[float],
+        dim_tech_stack: Optional[float],
+        dim_talent: Optional[float],
+        dim_leadership: Optional[float],
+        dim_use_case: Optional[float],
+        dim_culture: Optional[float],
+        vr_in_range: Optional[bool],
+        vr_expected: Optional[str],
+    ) -> None:
+        """Run MERGE into SCORING, TC_SCORING, and VR_SCORING in one shared connection."""
+        scoring_sql = """
+            MERGE INTO SCORING AS tgt
+            USING (SELECT %s AS ticker) AS src
+            ON tgt.ticker = src.ticker
+            WHEN MATCHED THEN UPDATE SET
+                tc         = COALESCE(%s, tgt.tc),
+                vr         = COALESCE(%s, tgt.vr),
+                pf         = COALESCE(%s, tgt.pf),
+                hr         = COALESCE(%s, tgt.hr),
+                updated_at = CURRENT_TIMESTAMP()
+            WHEN NOT MATCHED THEN INSERT
+                (ticker, tc, vr, pf, hr, scored_at, updated_at)
+            VALUES
+                (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+        """
+        tc_sql = """
+            MERGE INTO TC_SCORING AS tgt
+            USING (SELECT %s AS ticker) AS src
+            ON tgt.ticker = src.ticker
+            WHEN MATCHED THEN UPDATE SET
+                talent_concentration  = %s,
+                leadership_ratio      = %s,
+                team_size_factor      = %s,
+                skill_concentration   = %s,
+                individual_factor     = %s,
+                total_ai_jobs         = %s,
+                senior_ai_jobs        = %s,
+                mid_ai_jobs           = %s,
+                entry_ai_jobs         = %s,
+                unique_skills_count   = %s,
+                individual_mentions   = %s,
+                review_count          = %s,
+                ai_mentions           = %s,
+                tc_in_range           = %s,
+                tc_expected           = %s,
+                updated_at            = CURRENT_TIMESTAMP()
+            WHEN NOT MATCHED THEN INSERT (
+                ticker, talent_concentration, leadership_ratio, team_size_factor,
+                skill_concentration, individual_factor, total_ai_jobs, senior_ai_jobs,
+                mid_ai_jobs, entry_ai_jobs, unique_skills_count, individual_mentions,
+                review_count, ai_mentions, tc_in_range, tc_expected, scored_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+            )
+        """
+        vr_sql = """
+            MERGE INTO VR_SCORING AS tgt
+            USING (SELECT %s AS ticker) AS src
+            ON tgt.ticker = src.ticker
+            WHEN MATCHED THEN UPDATE SET
+                vr_score                = %s,
+                weighted_dim_score      = %s,
+                talent_risk_adj         = %s,
+                tc_used                 = %s,
+                dim_data_infrastructure = %s,
+                dim_ai_governance       = %s,
+                dim_technology_stack    = %s,
+                dim_talent_skills       = %s,
+                dim_leadership_vision   = %s,
+                dim_use_case_portfolio  = %s,
+                dim_culture_change      = %s,
+                vr_in_range             = %s,
+                vr_expected             = %s,
+                updated_at              = CURRENT_TIMESTAMP()
+            WHEN NOT MATCHED THEN INSERT (
+                ticker, vr_score, weighted_dim_score, talent_risk_adj, tc_used,
+                dim_data_infrastructure, dim_ai_governance, dim_technology_stack,
+                dim_talent_skills, dim_leadership_vision, dim_use_case_portfolio,
+                dim_culture_change, vr_in_range, vr_expected, scored_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+            )
+        """
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(scoring_sql, [ticker, tc, vr, None, None, ticker, tc, vr, None, None])
+                cur.execute(tc_sql, [
+                    ticker,
+                    tc, leadership_ratio, team_size_factor, skill_concentration, individual_factor,
+                    total_ai_jobs, senior_ai_jobs, mid_ai_jobs, entry_ai_jobs, unique_skills_cnt,
+                    individual_mentions, review_count, ai_mentions, tc_in_range, tc_expected,
+                    ticker, tc, leadership_ratio, team_size_factor, skill_concentration,
+                    individual_factor, total_ai_jobs, senior_ai_jobs, mid_ai_jobs, entry_ai_jobs,
+                    unique_skills_cnt, individual_mentions, review_count, ai_mentions,
+                    tc_in_range, tc_expected,
+                ])
+                cur.execute(vr_sql, [
+                    ticker,
+                    vr_score, weighted_dim_score, talent_risk_adj, tc,
+                    dim_data_infra, dim_ai_gov, dim_tech_stack, dim_talent,
+                    dim_leadership, dim_use_case, dim_culture, vr_in_range, vr_expected,
+                    ticker, vr_score, weighted_dim_score, talent_risk_adj, tc,
+                    dim_data_infra, dim_ai_gov, dim_tech_stack, dim_talent,
+                    dim_leadership, dim_use_case, dim_culture, vr_in_range, vr_expected,
+                ])
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                cur.close()
+
     def upsert_vr_result(
         self,
         ticker: str,

@@ -355,19 +355,54 @@ class DocumentRepository(BaseRepository):
                 cur.close()
 
     def get_all_company_stats(self) -> List[Dict]:
-        """Get stats for all companies"""
+        """Get stats for all companies in a single grouped query."""
         sql = """
-        SELECT DISTINCT ticker FROM documents ORDER BY ticker
+        SELECT
+            ticker,
+            filing_type,
+            COUNT(*) AS doc_count,
+            COALESCE(SUM(chunk_count), 0) AS total_chunks,
+            COALESCE(SUM(word_count), 0) AS total_words
+        FROM documents
+        GROUP BY ticker, filing_type
+        ORDER BY ticker, filing_type
         """
         with self.get_connection() as conn:
             cur = conn.cursor()
             try:
                 cur.execute(sql)
-                tickers = [row[0] for row in cur.fetchall()]
+                rows = cur.fetchall()
             finally:
                 cur.close()
-        
-        return [self.get_company_stats(ticker) for ticker in tickers]
+
+        stats_by_ticker: Dict[str, Dict] = {}
+        for row in rows:
+            ticker, filing_type, doc_count, total_chunks, total_words = row
+            if ticker not in stats_by_ticker:
+                stats_by_ticker[ticker] = {
+                    "ticker": ticker,
+                    "form_10k": 0,
+                    "form_10q": 0,
+                    "form_8k": 0,
+                    "def_14a": 0,
+                    "total": 0,
+                    "chunks": 0,
+                    "word_count": 0,
+                }
+            s = stats_by_ticker[ticker]
+            s["total"] += doc_count
+            s["chunks"] += total_chunks
+            s["word_count"] += total_words
+            if filing_type == "10-K":
+                s["form_10k"] = doc_count
+            elif filing_type == "10-Q":
+                s["form_10q"] = doc_count
+            elif filing_type == "8-K":
+                s["form_8k"] = doc_count
+            elif filing_type in ("DEF 14A", "DEF14A"):
+                s["def_14a"] = doc_count
+
+        return list(stats_by_ticker.values())
 
     def get_summary_statistics(self) -> Dict:
         """Get overall summary statistics"""

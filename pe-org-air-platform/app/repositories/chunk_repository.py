@@ -242,6 +242,61 @@ class ChunkRepository(BaseRepository):
             finally:
                 cur.close()
 
+    def get_s3_keys_for_section_map(
+        self,
+        ticker: str,
+        section_map: Dict[str, List[str]],
+        filing_type: str = "10-K",
+    ) -> Dict[str, List[str]]:
+        """
+        Return {section_map_key: [s3_keys]} for all section groups in one query.
+
+        Args:
+            ticker: Company ticker symbol
+            section_map: e.g. {"sec_item_1": ["business", "item_1_business", ...], ...}
+            filing_type: Document filing type filter
+
+        Returns:
+            Dict mapping each section_map key to its list of distinct S3 keys
+        """
+        # Build reverse lookup: section_name_lower -> [map_keys]
+        reverse: Dict[str, List[str]] = {}
+        for map_key, section_names in section_map.items():
+            for name in section_names:
+                reverse.setdefault(name.lower(), []).append(map_key)
+
+        all_sections = list(reverse.keys())
+        if not all_sections:
+            return {k: [] for k in section_map}
+
+        placeholders = ", ".join(["%s"] * len(all_sections))
+        sql = f"""
+        SELECT DISTINCT LOWER(dc.section), dc.s3_key
+        FROM document_chunks dc
+        JOIN documents d ON dc.document_id = d.id
+        WHERE d.ticker = %s
+        AND d.filing_type = %s
+        AND LOWER(dc.section) IN ({placeholders})
+        AND d.status IN ('chunked', 'indexed', 'parsed')
+        AND dc.s3_key IS NOT NULL
+        """
+        params = [ticker.upper(), filing_type] + all_sections
+
+        result: Dict[str, set] = {k: set() for k in section_map}
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(sql, params)
+                for section_lower, s3_key in cur.fetchall():
+                    if not s3_key:
+                        continue
+                    for map_key in reverse.get(section_lower, []):
+                        result[map_key].add(s3_key)
+            finally:
+                cur.close()
+
+        return {k: sorted(v) for k, v in result.items()}
+
     def get_all_s3_keys(
         self,
         ticker: str,

@@ -8,12 +8,15 @@ app/routers/health.py
 
 from __future__ import annotations
 
+import logging
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Dict
 from datetime import datetime, timezone
 import os
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Health"])
 

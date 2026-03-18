@@ -127,6 +127,40 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+# ---------------------------------------------------------------------------
+# Service-layer exceptions
+# ---------------------------------------------------------------------------
+
+class ServiceException(Exception):
+    """Base exception for service-layer errors."""
+    pass
+
+
+class ExternalServiceError(ServiceException):
+    """An external dependency (API, DB, S3) failed."""
+
+    def __init__(self, service: str, message: str, retryable: bool = False):
+        self.service = service
+        self.retryable = retryable
+        super().__init__(f"[{service}] {message}")
+
+
+class EvidenceNotFoundError(ServiceException):
+    """Expected evidence data was missing."""
+
+    def __init__(self, ticker: str, dimension: str = ""):
+        self.ticker = ticker
+        self.dimension = dimension
+        detail = f"No evidence for {ticker}"
+        if dimension:
+            detail += f" dimension={dimension}"
+        super().__init__(detail)
+
+
+# ---------------------------------------------------------------------------
+# Repository exceptions
+# ---------------------------------------------------------------------------
+
 class RepositoryException(Exception):
     """Base exception for repository operations."""
 

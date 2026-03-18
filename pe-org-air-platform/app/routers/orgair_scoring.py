@@ -6,17 +6,15 @@ Endpoints:
   POST /api/v1/scoring/orgair/portfolio       — Compute Org-AI-R for all 5 CS3 companies
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import List, Dict, Any
 import logging
 import time
 
-from app.services.composite_scoring_service import (
-    get_composite_scoring_service,
-    OrgAIRResponse,
-    CS3_PORTFOLIO,
-)
+from app.config.company_mappings import CS3_PORTFOLIO
+from app.core.dependencies import get_composite_scoring_service
+from app.services.composite_scoring_service import OrgAIRResponse
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +61,11 @@ class ResultsGenerationResponse(BaseModel):
     and validation against CS3 Table 5 expected ranges.
     """,
 )
-async def generate_results():
+async def generate_results(
+    svc=Depends(get_composite_scoring_service),
+):
     """Generate results JSON files for CS3 submission."""
-    result = get_composite_scoring_service().compute_full_pipeline(CS3_PORTFOLIO)
+    result = svc.compute_full_pipeline(CS3_PORTFOLIO)
     return ResultsGenerationResponse(
         status="success",
         files_generated=result["files_generated"],
@@ -85,10 +85,11 @@ async def generate_results():
     response_model=PortfolioOrgAIRResponse,
     summary="Calculate Org-AI-R for all 5 CS3 portfolio companies",
 )
-async def score_portfolio_orgair():
+async def score_portfolio_orgair(
+    svc=Depends(get_composite_scoring_service),
+):
     """Calculate Org-AI-R for all 5 companies."""
     start = time.time()
-    svc = get_composite_scoring_service()
 
     logger.info("=" * 70)
     logger.info("Org-AI-R PORTFOLIO SCORING — 5 COMPANIES")

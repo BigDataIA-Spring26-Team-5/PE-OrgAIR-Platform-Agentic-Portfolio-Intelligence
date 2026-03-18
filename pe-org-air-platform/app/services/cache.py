@@ -93,7 +93,7 @@ def create_cache_info(hit: bool, key: str, latency_ms: float, ttl: int) -> Cache
 
 
 # ---------------------------------------------------------------------------
-# invalidate_assessment_cache (shared by assessments and dimensionScores routers)
+# invalidate_assessment_cache (shared by assessments and dimension_scores routers)
 # ---------------------------------------------------------------------------
 
 def invalidate_assessment_cache(assessment_id: UUID) -> None:

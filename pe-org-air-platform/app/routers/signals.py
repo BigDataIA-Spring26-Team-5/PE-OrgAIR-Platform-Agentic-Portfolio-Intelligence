@@ -7,20 +7,27 @@
 #   GET   /api/v1/signals/detailed                      - List signals (filterable)
 # """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.repositories.company_repository import CompanyRepository
-from app.repositories.signal_repository import get_signal_repository
-from app.services.job_signal_service import get_job_signal_service
-from app.services.leadership_service import get_leadership_service
-from app.services.patent_signal_service import get_patent_signal_service
-from app.services.tech_signal_service import get_tech_signal_service
+from app.repositories.signal_repository import SignalRepository
+from app.core.dependencies import (
+    get_company_repository,
+    get_signal_repository,
+    get_job_signal_service,
+    get_patent_signal_service,
+    get_tech_signal_service,
+    get_leadership_service,
+)
+from app.core.exceptions import raise_error
+from app.routers.common import get_company_or_404
 
 logger = logging.getLogger(__name__)
 
@@ -60,17 +67,6 @@ class CollectionResponse(BaseModel):
 # =============================================================================
 
 router = APIRouter(prefix="/api/v1", tags=["Signals"])
-
-
-# =============================================================================
-# Helper: look up company or 404
-# =============================================================================
-
-def _get_company_or_404(ticker: str) -> dict:
-    company = CompanyRepository().get_by_ticker(ticker.upper())
-    if not company:
-        raise HTTPException(status_code=404, detail=f"Company not found: {ticker}")
-    return company
 
 
 # =============================================================================
@@ -132,7 +128,7 @@ async def run_signal_collection(
     logger.info(f"Starting signal collection: task_id={task_id}, company={company_id}")
     _task_store[task_id]["status"] = "running"
 
-    company_repo = CompanyRepository()
+    company_repo = get_company_repository()
     company = company_repo.get_by_ticker(company_id.upper())
     if not company:
         companies = company_repo.get_all()
@@ -165,7 +161,7 @@ async def run_signal_collection(
         try:
             handler = category_handlers.get(category)
             if handler:
-                signal_result = await handler()
+                signal_result = await asyncio.to_thread(handler)
                 result["signals"][category] = {
                     "status": "success",
                     "score": signal_result.get("normalized_score"),
@@ -199,27 +195,27 @@ async def list_signals(
     ticker: Optional[str] = Query(None, description="Filter by company ticker"),
     min_score: Optional[float] = Query(None, ge=0, le=100, description="Minimum score"),
     limit: int = Query(100, ge=1, le=1000, description="Max results"),
+    signal_repo: SignalRepository = Depends(get_signal_repository),
+    company_repo: CompanyRepository = Depends(get_company_repository),
 ):
     """List signals with optional filters."""
-    repo = get_signal_repository()
-    company_repo = CompanyRepository()
     results = []
 
     if ticker:
-        company = _get_company_or_404(ticker)
+        company = get_company_or_404(ticker, company_repo)
         company_id = str(company["id"])
         results = (
-            repo.get_signals_by_category(company_id, category)
+            signal_repo.get_signals_by_category(company_id, category)
             if category
-            else repo.get_signals_by_company(company_id)
+            else signal_repo.get_signals_by_company(company_id)
         )
     else:
         for company in company_repo.get_all():
             company_id = str(company.get("id"))
             signals = (
-                repo.get_signals_by_category(company_id, category)
+                signal_repo.get_signals_by_category(company_id, category)
                 if category
-                else repo.get_signals_by_company(company_id)
+                else signal_repo.get_signals_by_company(company_id)
             )
             results.extend(signals)
 

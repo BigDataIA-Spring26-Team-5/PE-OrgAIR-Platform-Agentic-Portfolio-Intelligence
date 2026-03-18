@@ -476,6 +476,62 @@ class VectorStore:
 
         return []
 
+    def get_sample(
+        self,
+        limit: int = 10,
+        ticker: Optional[str] = None,
+    ) -> List["SearchResult"]:
+        """Fetch documents by metadata without embeddings (uses /get endpoint).
+
+        Used by rag_debug — does not require sentence-transformers to be loaded.
+        """
+        limit = min(limit, 300)  # Chroma Cloud free tier cap
+        if self._use_cloud and self._collection_id:
+            body: Dict[str, Any] = {
+                "limit": limit,
+                "include": ["documents", "metadatas"],
+            }
+            if ticker:
+                body["where"] = {"ticker": {"$eq": ticker}}
+            try:
+                resp = requests.post(
+                    f"{self._base_url()}/collections/{self._collection_id}/get",
+                    headers=self._headers(),
+                    json=body,
+                    timeout=30,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    ids = data.get("ids") or []
+                    docs = data.get("documents") or [""] * len(ids)
+                    metas = data.get("metadatas") or [{}] * len(ids)
+                    return [
+                        SearchResult(doc_id=id_, content=doc or "", metadata=meta, score=0.0, distance=0.0)
+                        for id_, doc, meta in zip(ids, docs, metas)
+                    ]
+                logger.warning("cloud_get_sample_failed status=%s body=%s", resp.status_code, resp.text[:200])
+            except Exception as e:
+                logger.warning("cloud_get_sample_error error=%s", e)
+        elif self._local_collection:
+            try:
+                kwargs: Dict[str, Any] = {
+                    "limit": limit,
+                    "include": ["documents", "metadatas"],
+                }
+                if ticker:
+                    kwargs["where"] = {"ticker": {"$eq": ticker}}
+                results = self._local_collection.get(**kwargs)
+                ids = results.get("ids") or []
+                docs = results.get("documents") or [""] * len(ids)
+                metas = results.get("metadatas") or [{}] * len(ids)
+                return [
+                    SearchResult(doc_id=id_, content=doc or "", metadata=meta, score=0.0, distance=0.0)
+                    for id_, doc, meta in zip(ids, docs, metas)
+                ]
+            except Exception as e:
+                logger.warning("local_get_sample_error error=%s", e)
+        return []
+
     def wipe(self) -> int:
         if self._use_cloud and self._collection_id:
             count = self._cloud_count()
@@ -507,3 +563,44 @@ class VectorStore:
             except Exception:
                 return 0
         return 0
+
+    def get_all_metadata(self) -> List[Dict[str, Any]]:
+        """Paginate through entire collection, returning only metadata dicts.
+
+        Uses /get endpoint — no embeddings required.
+        Chroma Cloud free tier: max 300 per request, so paginates automatically.
+        """
+        all_metas: List[Dict[str, Any]] = []
+        if self._use_cloud and self._collection_id:
+            offset = 0
+            batch = 300
+            while True:
+                try:
+                    resp = requests.post(
+                        f"{self._base_url()}/collections/{self._collection_id}/get",
+                        headers=self._headers(),
+                        json={"limit": batch, "offset": offset, "include": ["metadatas"]},
+                        timeout=30,
+                    )
+                    if resp.status_code != 200:
+                        logger.warning("get_all_metadata_failed status=%s", resp.status_code)
+                        break
+                    data = resp.json()
+                    ids = data.get("ids") or []
+                    metas = data.get("metadatas") or [{}] * len(ids)
+                    if not ids:
+                        break
+                    all_metas.extend(metas)
+                    offset += len(ids)
+                    if len(ids) < batch:
+                        break
+                except Exception as e:
+                    logger.warning("get_all_metadata_error error=%s", e)
+                    break
+        elif self._local_collection:
+            try:
+                results = self._local_collection.get(include=["metadatas"])
+                all_metas = results.get("metadatas") or []
+            except Exception as e:
+                logger.warning("local_get_all_metadata_error error=%s", e)
+        return all_metas

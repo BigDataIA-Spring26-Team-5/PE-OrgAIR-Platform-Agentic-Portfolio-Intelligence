@@ -25,10 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 # =====================================================================
-# Constants (single source of truth — previously duplicated in 4 routers)
+# Constants
 # =====================================================================
 
-CS3_PORTFOLIO = ["NVDA", "JPM", "WMT", "GE", "DG"]
+from app.config.company_mappings import CS3_PORTFOLIO  # noqa: E402
 
 EXPECTED_TC_VR_RANGES = {
     "NVDA": {"tc": (0.05, 0.20), "pf": (0.7, 1.0),  "vr": (80, 100)},

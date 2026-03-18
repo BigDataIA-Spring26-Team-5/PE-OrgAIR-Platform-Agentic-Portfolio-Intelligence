@@ -10,12 +10,16 @@ Endpoints:
 Already registered in main.py as scoring_router.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import logging
 import time
+
+from app.core.dependencies import get_scoring_service, get_scoring_repository
+from app.core.exceptions import raise_error
+from app.utils.serialization import serialize_row
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +62,12 @@ class DimensionScoresResponse(BaseModel):
 
 
 # =====================================================================
+# Helpers
+# =====================================================================
+
+
+
+# =====================================================================
 # POST /api/v1/scoring/all — Score all companies
 # NOTE: This MUST be defined BEFORE /scoring/{ticker} so FastAPI
 #       matches the static "/all" path before the dynamic "{ticker}".
@@ -73,13 +83,13 @@ class DimensionScoresResponse(BaseModel):
     """,
     tags=["CS3 Dimensions Scoring"],
 )
-async def score_all_companies():
+async def score_all_companies(
+    service=Depends(get_scoring_service),
+):
     """Score all companies."""
     start = time.time()
 
     try:
-        from app.services.scoring_service import get_scoring_service
-        service = get_scoring_service()
         results = service.score_all_companies()
 
         responses = []
@@ -113,7 +123,7 @@ async def score_all_companies():
         )
     except Exception as e:
         logger.error(f"Scoring all failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_error(500, "SCORING_FAILED", "Failed to score all companies.")
 
 
 # =====================================================================
@@ -137,14 +147,15 @@ async def score_all_companies():
     """,
     tags=["CS3 Dimensions Scoring"],
 )
-async def score_company(ticker: str):
+async def score_company(
+    ticker: str,
+    service=Depends(get_scoring_service),
+):
     """Score one company — full CS3 pipeline."""
     start = time.time()
     ticker = ticker.upper()
 
     try:
-        from app.services.scoring_service import get_scoring_service
-        service = get_scoring_service()
         result = service.score_company(ticker)
 
         return ScoringResponse(
@@ -187,58 +198,32 @@ async def score_company(ticker: str):
     """,
     tags=["CS3 Dimensions Scoring"],
 )
-async def get_dimension_scores(ticker: str):
+async def get_dimension_scores(
+    ticker: str,
+    repo=Depends(get_scoring_repository),
+):
     """View dimension scores from Snowflake."""
     ticker = ticker.upper()
 
     try:
-        from app.repositories.scoring_repository import get_scoring_repository
-        repo = get_scoring_repository()
         rows = repo.get_dimension_scores(ticker)
 
         if not rows:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No dimension scores found for {ticker}. Run POST /api/v1/scoring/{ticker} first."
+            raise_error(
+                404,
+                "SCORES_NOT_FOUND",
+                f"No dimension scores found for {ticker}. Run POST /api/v1/scoring/{ticker} first.",
             )
 
-        clean_rows = [_serialize_row(r) for r in rows]
+        clean_rows = [serialize_row(r) for r in rows]
 
         return DimensionScoresResponse(
             ticker=ticker,
             scores=clean_rows,
             score_count=len(clean_rows),
         )
-    except HTTPException:
-        raise
     except Exception as e:
+        if hasattr(e, 'status_code'):
+            raise
         logger.error(f"Failed to get dimensions for {ticker}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# =====================================================================
-# Helpers
-# =====================================================================
-
-def _serialize_row(row: Dict) -> Dict:
-    """Convert Decimal/datetime types to JSON-safe types."""
-    from decimal import Decimal
-    clean = {}
-    for k, v in row.items():
-        if isinstance(v, Decimal):
-            clean[k] = float(v)
-        elif isinstance(v, datetime):
-            clean[k] = v.isoformat()
-        else:
-            clean[k] = v
-    return clean
-
-
-def _safe_float(val) -> Optional[float]:
-    """Safely convert to float."""
-    if val is None:
-        return None
-    try:
-        return float(val)
-    except (ValueError, TypeError):
-        return None
+        raise_error(500, "FETCH_FAILED", "Failed to retrieve dimension scores.")

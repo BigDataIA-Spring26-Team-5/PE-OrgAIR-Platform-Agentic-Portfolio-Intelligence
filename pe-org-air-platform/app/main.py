@@ -1,29 +1,36 @@
 import signal
 import asyncio
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
 # IMPORT ROUTERS
 from app.routers.companies import router as companies_router
-from app.core.exceptions import validation_exception_handler
-# from app.routers.industries import router as industries_router  # Not needed: CS4 doesn't use industry catalog
 from app.routers.health import router as health_router
-from app.routers.dimensionScores import router as dimension_scores_router
+from app.routers.dimension_scores import router as dimension_scores_router
 from app.routers.documents import router as documents_router
 from app.routers.signals import router as signals_router
 from app.routers.evidence import router as evidence_router
 from app.routers.scoring import router as scoring_router
+from app.routers.rag import router as rag_router
 from app.routers.tc_vr_scoring import router as tc_vr_router
 from app.routers.position_factor import router as pf_router
 from app.routers.hr_scoring import router as hr_router
 from app.routers.orgair_scoring import router as orgair_router
 from app.routers.analyst_notes import router as analyst_notes_router
-from fastapi.middleware.cors import CORSMiddleware
 
-from app.shutdown import set_shutdown, is_shutting_down
+from app.core.exceptions import validation_exception_handler
+from app.shutdown import set_shutdown
+
+logger = logging.getLogger(__name__)
 
 
 # SWAGGER UI — tag display order
@@ -114,6 +121,46 @@ _OPENAPI_TAGS = [
     },
 ]
 
+
+# LIFESPAN — replaces deprecated @app.on_event("startup"/"shutdown")
+def _register_windows_signal_handlers():
+    original_sigint = signal.getsignal(signal.SIGINT)
+
+    def _windows_handler(signum, frame):
+        print("\nReceived Ctrl+C — shutting down gracefully...")
+        set_shutdown()
+        if callable(original_sigint):
+            original_sigint(signum, frame)
+
+    signal.signal(signal.SIGINT, _windows_handler)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    print("Starting PE Org-AI-R Platform Foundation API...")
+    print("Swagger UI available at: http://localhost:8000/docs")
+
+    loop = asyncio.get_running_loop()
+
+    def _signal_handler(sig):
+        print(f"\nReceived {sig.name} — shutting down gracefully...")
+        set_shutdown()
+
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, _signal_handler, sig)
+    except NotImplementedError:
+        print("Signal handlers not supported on Windows, using fallback...")
+        _register_windows_signal_handlers()
+
+    yield
+
+    # Shutdown
+    print("Shutting down PE Org-AI-R Platform Foundation API...")
+    set_shutdown()
+
+
 # FASTAPI APPLICATION CONFIGURATION
 app = FastAPI(
     title="PE Org-AI-R Platform — CS4 Data Layer",
@@ -122,6 +169,7 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
     openapi_tags=_OPENAPI_TAGS,
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -135,6 +183,22 @@ app.add_middleware(
 # REGISTER EXCEPTION HANDLERS
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch-all handler for unhandled exceptions — returns structured 500."""
+    logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error_code": "INTERNAL_ERROR",
+            "message": "An unexpected error occurred.",
+            "details": None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
 # REGISTER ROUTERS
 app.include_router(health_router)            # Operational health checks
 # CS1 — Company metadata
@@ -146,18 +210,12 @@ app.include_router(evidence_router)          # aggregated evidence stats per tic
 # CS3 — Scoring & assessments
 app.include_router(dimension_scores_router)  # per-dimension scores + confidence intervals
 app.include_router(scoring_router)           # dimension scoring computation + rubrics
-
-from app.routers.rag import router as rag_router
-app.include_router(rag_router)
-
+app.include_router(rag_router)               # CS4 — RAG search and justification
 app.include_router(tc_vr_router)             # TC + V^R computation
 app.include_router(pf_router)               # Position Factor computation
 app.include_router(hr_router)               # Human Capital Risk computation
 app.include_router(orgair_router)           # Synergy + Org-AI-R computation
 app.include_router(analyst_notes_router)   # CS4 — Analyst Notes (interview, DD findings, data room)
-
-# COMMENTED OUT — not needed:
-# app.include_router(industries_router)        # static catalog, not used by CS4 clients
 
 
 # ROOT ENDPOINT
@@ -172,45 +230,6 @@ async def root():
         },
         "status": "running"
     }
-
-
-# STARTUP EVENT
-@app.on_event("startup")
-async def startup_event():
-    print("Starting PE Org-AI-R Platform Foundation API...")
-    print("Swagger UI available at: http://localhost:8000/docs")
-
-    loop = asyncio.get_running_loop()
-
-    def _signal_handler(sig):
-        print(f"\n⚠️  Received {sig.name} — shutting down gracefully...")
-        set_shutdown()
-
-    try:
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, _signal_handler, sig)
-    except NotImplementedError:
-        print("⚠️  Signal handlers not supported on Windows, using fallback...")
-        _register_windows_signal_handlers()
-
-
-# SHUTDOWN EVENT
-@app.on_event("shutdown")
-async def shutdown_event():
-    print("Shutting down PE Org-AI-R Platform Foundation API...")
-    set_shutdown()
-
-
-def _register_windows_signal_handlers():
-    original_sigint = signal.getsignal(signal.SIGINT)
-
-    def _windows_handler(signum, frame):
-        print(f"\n⚠️  Received Ctrl+C — shutting down gracefully...")
-        set_shutdown()
-        if callable(original_sigint):
-            original_sigint(signum, frame)
-
-    signal.signal(signal.SIGINT, _windows_handler)
 
 
 # RUN WITH UVICORN

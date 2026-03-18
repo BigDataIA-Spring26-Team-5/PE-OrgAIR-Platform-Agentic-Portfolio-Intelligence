@@ -11,7 +11,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
-from pydantic import BaseModel, Field, root_validator
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.dependencies import get_company_repository, get_industry_repository
 from app.core.exceptions import raise_error
@@ -41,7 +41,7 @@ class CompanyBase(BaseModel):
     industry_id: Optional[UUID] = None
     position_factor: float = Field(default=0.0, ge=-1.0, le=1.0)
 
-    @root_validator(pre=True)
+    @model_validator(mode='before')
     @classmethod
     def uppercase_ticker(cls, values):
         if 'ticker' in values and values['ticker']:

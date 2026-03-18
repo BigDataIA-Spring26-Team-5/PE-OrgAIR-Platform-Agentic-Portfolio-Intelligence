@@ -212,7 +212,7 @@ def reingest_company(ticker: str, dry_run: bool = False, years_back: int = 3):
             logger.error(f"   ❌ Snowflake update failed: {e}")
             try:
                 conn.rollback()
-            except:
+            except Exception:
                 pass
         finally:
             cur.close()

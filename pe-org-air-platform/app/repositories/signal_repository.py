@@ -78,7 +78,7 @@ class SignalRepository(BaseRepository):
                     if record.get('metadata') and isinstance(record['metadata'], str):
                         try:
                             record['metadata'] = json.loads(record['metadata'])
-                        except:
+                        except (json.JSONDecodeError, ValueError, TypeError):
                             pass
                     results.append(record)
                 return results
@@ -107,7 +107,7 @@ class SignalRepository(BaseRepository):
                     if record.get('metadata') and isinstance(record['metadata'], str):
                         try:
                             record['metadata'] = json.loads(record['metadata'])
-                        except:
+                        except (json.JSONDecodeError, ValueError, TypeError):
                             pass
                     results.append(record)
                 return results
@@ -135,7 +135,7 @@ class SignalRepository(BaseRepository):
                     if record.get('metadata') and isinstance(record['metadata'], str):
                         try:
                             record['metadata'] = json.loads(record['metadata'])
-                        except:
+                        except (json.JSONDecodeError, ValueError, TypeError):
                             pass
                     results.append(record)
                 return results

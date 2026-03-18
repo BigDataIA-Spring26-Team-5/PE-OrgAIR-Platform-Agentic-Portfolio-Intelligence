@@ -4,6 +4,8 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, date
 from enum import Enum
 
+from app.models.signal import CompanySignalSummary
+
 # Document Summary (replaces per-document listing)
 
 class DocumentSummary(BaseModel):
@@ -36,16 +38,6 @@ class SignalEvidence(BaseModel):
     created_at: Optional[datetime] = None
 
 
-class SignalSummary(BaseModel):
-    """Aggregated signal scores for a company."""
-    technology_hiring_score: Optional[float] = None
-    innovation_activity_score: Optional[float] = None
-    digital_presence_score: Optional[float] = None
-    leadership_signals_score: Optional[float] = None
-    composite_score: Optional[float] = None
-    signal_count: int = 0
-    last_updated: Optional[datetime] = None
-
 
 
 # Company Evidence Response
@@ -59,7 +51,7 @@ class CompanyEvidenceResponse(BaseModel):
     document_summary: DocumentSummary = Field(default_factory=DocumentSummary)
     signals: List[SignalEvidence] = []
     signal_count: int = 0
-    signal_summary: Optional[SignalSummary] = None
+    signal_summary: Optional[CompanySignalSummary] = None
 
 
 

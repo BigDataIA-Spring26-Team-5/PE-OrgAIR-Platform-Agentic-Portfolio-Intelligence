@@ -221,8 +221,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Dict
 
-from app.services.integration.cs1_client import CS1Client, Company
-from app.services.integration.cs3_client import CS3Client, CompanyAssessment
+from app.services.integration.cs1_client import Company, Sector
+from app.services.integration.cs3_client import CompanyAssessment, DimensionScore, score_to_level
 from app.services.justification.generator import JustificationGenerator, ScoreJustification
 
 logger = logging.getLogger(__name__)
@@ -254,49 +254,47 @@ class ICMeetingPackage:
 
 
 class ICPrepWorkflow:
-    """Orchestrates full IC meeting preparation package.
-
-    NOTE: prepare_meeting() is async to support:
-      - Non-blocking CS1 API calls (CS1Client uses httpx.AsyncClient)
-      - Concurrent dimension justification generation via asyncio.gather()
-      - FastAPI async endpoint compatibility
-      - Future streaming support when switching to Claude
-    """
+    """Orchestrates full IC meeting preparation package."""
 
     def __init__(
         self,
-        cs1: Optional[CS1Client] = None,
-        cs3: Optional[CS3Client] = None,
+        company_repo=None,
+        scoring_repo=None,
+        composite_repo=None,
         generator: Optional[JustificationGenerator] = None,
     ):
-        self.cs1 = cs1 or CS1Client()
-        self.cs3 = cs3 or CS3Client()
-        self.generator = generator or JustificationGenerator()
+        if company_repo is None:
+            from app.repositories.company_repository import CompanyRepository
+            company_repo = CompanyRepository()
+        if scoring_repo is None:
+            from app.repositories.scoring_repository import get_scoring_repository
+            scoring_repo = get_scoring_repository()
+        if composite_repo is None:
+            from app.repositories.composite_scoring_repository import get_composite_scoring_repo
+            composite_repo = get_composite_scoring_repo()
+        self.company_repo = company_repo
+        self.scoring_repo = scoring_repo
+        self.composite_repo = composite_repo
+        self.generator = generator or JustificationGenerator(scoring_repo=scoring_repo)
 
     async def prepare_meeting(
         self,
         ticker: str,
         focus_dimensions: Optional[List[str]] = None,
     ) -> ICMeetingPackage:
-        """Generate full IC meeting package for a company.
-
-        Async because:
-          1. CS1Client.get_company() uses httpx.AsyncClient (requires await)
-          2. Dimension justifications run concurrently via asyncio.gather()
-             instead of sequentially — faster IC prep
-        """
-        # Step 1: Fetch company metadata (async — CS1Client uses AsyncClient)
-        company = await self.cs1.get_company(ticker)
+        """Generate full IC meeting package for a company."""
+        # Step 1: Fetch company metadata directly from DB (no HTTP)
+        company = self._fetch_company(ticker)
         if company is None:
             company = Company(
                 company_id=ticker,
                 ticker=ticker,
                 name=ticker,
-                sector="Unknown",
+                sector=Sector.BUSINESS_SERVICES,
             )
 
-        # Step 2: Fetch assessment (sync — CS3Client still uses sync httpx.Client)
-        assessment = self.cs3.get_assessment(ticker)
+        # Step 2: Fetch assessment directly from DB (no HTTP)
+        assessment = self._fetch_assessment(ticker)
 
         # Step 3: Generate justifications concurrently for all dimensions
         # asyncio.gather() runs all 7 dimensions in parallel instead of sequentially
@@ -362,6 +360,55 @@ class ICPrepWorkflow:
             generated_at=datetime.utcnow().isoformat(),
             total_evidence_count=total_evidence,
             avg_evidence_strength=avg_strength,
+        )
+
+    def _fetch_company(self, ticker: str) -> Optional[Company]:
+        """Build Company from DB row — no HTTP."""
+        row = self.company_repo.get_by_ticker(ticker)
+        if not row:
+            return None
+        raw_sector = row.get("sector", "")
+        try:
+            sector = Sector(raw_sector.lower().replace(" ", "_"))
+        except (ValueError, AttributeError):
+            sector = Sector.BUSINESS_SERVICES
+        return Company(
+            company_id=str(row.get("id", ticker)),
+            ticker=row.get("ticker", ticker),
+            name=row.get("name", ticker),
+            sector=sector,
+            sub_sector=row.get("sub_sector", ""),
+            market_cap_percentile=float(row.get("market_cap_percentile") or 0.0),
+            revenue_millions=float(row.get("revenue_millions") or 0.0),
+            employee_count=int(row.get("employee_count") or 0),
+            fiscal_year_end=row.get("fiscal_year_end", ""),
+        )
+
+    def _fetch_assessment(self, ticker: str) -> Optional[CompanyAssessment]:
+        """Build CompanyAssessment from DB rows — no HTTP."""
+        dim_rows = self.scoring_repo.get_dimension_scores(ticker)
+        if not dim_rows:
+            return None
+        dim_scores: Dict[str, DimensionScore] = {}
+        for row in dim_rows:
+            dim = row["dimension"]
+            score = float(row.get("score", 0.0))
+            level, level_name = score_to_level(score)
+            dim_scores[dim] = DimensionScore(
+                dimension=dim, score=score, level=level, level_name=level_name,
+            )
+        # Composite scores (TC, VR, PF, HR) — DictCursor returns uppercase keys
+        composite = self.composite_repo.fetch_tc_vr_row(ticker) or {}
+        orgair = self.composite_repo.fetch_orgair_row(ticker) or {}
+        return CompanyAssessment(
+            company_id=ticker,
+            ticker=ticker,
+            dimension_scores=dim_scores,
+            talent_concentration=float(composite.get("TC", 0.0) or 0.0),
+            valuation_risk=float(composite.get("VR", 0.0) or 0.0),
+            position_factor=float(composite.get("PF", 0.0) or 0.0),
+            human_capital_risk=float(composite.get("HR", 0.0) or 0.0),
+            org_air_score=float(orgair.get("ORG_AIR", 0.0) or 0.0),
         )
 
     @staticmethod
@@ -442,7 +489,7 @@ class ICPrepWorkflow:
         return (
             f"{company.name} ({company.ticker}) demonstrates an average AI readiness score of "
             f"{avg_score:.0f}/100 across {n_dims} assessed dimensions, with an Org-AI-R composite "
-            f"of {org_air_str}. The company operates in {company.sector} with approximately "
+            f"of {org_air_str}. The company operates in {company.sector.value.replace('_', ' ').title()} with approximately "
             f"{employee_str} employees and {revenue_str} revenue. "
             f"Key differentiators and risk factors are detailed in the dimension-level justifications below."
         )

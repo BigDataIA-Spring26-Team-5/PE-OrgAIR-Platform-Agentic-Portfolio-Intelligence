@@ -118,6 +118,11 @@ class HybridRetriever:
         if not self._try_load_pickle():
             self._load_bm25_from_store()
 
+    @property
+    def sparse_index_size(self) -> int:
+        """Number of documents in the BM25 sparse index."""
+        return len(self._doc_store)
+
     # ── Pickle persistence ─────────────────────────────────────────────────────
 
     def _try_load_pickle(self) -> bool:
@@ -303,6 +308,45 @@ class HybridRetriever:
         )
 
     # ── Public API ─────────────────────────────────────────────────────────────
+
+    def rebuild_sparse_index_from_chroma(self) -> int:
+        """Rebuild BM25 sparse index from ALL ChromaDB documents.
+
+        Unlike _load_bm25_from_store() which only samples ~500 docs via seed queries,
+        this fetches every document in the collection for complete coverage.
+        Call on startup to restore full hybrid retrieval capability.
+        Returns the number of documents indexed.
+        """
+        if not _BM25_AVAILABLE:
+            logger.warning("rebuild_sparse_skipped reason=bm25_unavailable")
+            return 0
+
+        all_results = self._vector_store.get_all_documents()
+        if not all_results:
+            logger.info("rebuild_sparse_skipped reason=no_documents_in_chroma")
+            return 0
+
+        self._doc_store = [
+            RetrievedDocument(
+                doc_id=r.doc_id,
+                content=r.content,
+                metadata=r.metadata,
+                score=0.0,
+                retrieval_method="chroma_rebuild",
+            )
+            for r in all_results
+            if r.content
+        ]
+        self._tokenized_corpus = [d.content.lower().split() for d in self._doc_store]
+        self._bm25 = BM25Okapi(self._tokenized_corpus)
+        self._seeded_tickers = {
+            d.metadata.get("ticker")
+            for d in self._doc_store
+            if d.metadata.get("ticker")
+        }
+        self._save_pickle()
+        logger.info("rebuild_sparse_complete doc_count=%d", len(self._doc_store))
+        return len(self._doc_store)
 
     def refresh_sparse_index(self):
         """

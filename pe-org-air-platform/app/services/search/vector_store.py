@@ -604,3 +604,62 @@ class VectorStore:
             except Exception as e:
                 logger.warning("local_get_all_metadata_error error=%s", e)
         return all_metas
+
+    def get_all_documents(self) -> List["SearchResult"]:
+        """Paginate through entire collection, returning IDs + content + metadata.
+
+        Same pagination strategy as get_all_metadata() but includes documents.
+        Used by HybridRetriever.rebuild_sparse_index_from_chroma().
+        """
+        all_docs: List[SearchResult] = []
+        if self._use_cloud and self._collection_id:
+            offset = 0
+            batch = 300
+            while True:
+                try:
+                    resp = requests.post(
+                        f"{self._base_url()}/collections/{self._collection_id}/get",
+                        headers=self._headers(),
+                        json={"limit": batch, "offset": offset, "include": ["documents", "metadatas"]},
+                        timeout=30,
+                    )
+                    if resp.status_code != 200:
+                        logger.warning("get_all_documents_failed status=%s", resp.status_code)
+                        break
+                    data = resp.json()
+                    ids = data.get("ids") or []
+                    documents = data.get("documents") or [""] * len(ids)
+                    metas = data.get("metadatas") or [{}] * len(ids)
+                    if not ids:
+                        break
+                    for doc_id, content, meta in zip(ids, documents, metas):
+                        all_docs.append(SearchResult(
+                            doc_id=doc_id,
+                            content=content or "",
+                            metadata=meta or {},
+                            score=0.0,
+                            distance=0.0,
+                        ))
+                    offset += len(ids)
+                    if len(ids) < batch:
+                        break
+                except Exception as e:
+                    logger.warning("get_all_documents_error error=%s", e)
+                    break
+        elif self._local_collection:
+            try:
+                results = self._local_collection.get(include=["documents", "metadatas"])
+                ids = results.get("ids") or []
+                documents = results.get("documents") or [""] * len(ids)
+                metas = results.get("metadatas") or [{}] * len(ids)
+                for doc_id, content, meta in zip(ids, documents, metas):
+                    all_docs.append(SearchResult(
+                        doc_id=doc_id,
+                        content=content or "",
+                        metadata=meta or {},
+                        score=0.0,
+                        distance=0.0,
+                    ))
+            except Exception as e:
+                logger.warning("local_get_all_documents_error error=%s", e)
+        return all_docs

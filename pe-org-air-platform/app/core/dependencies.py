@@ -106,3 +106,7 @@ def get_cs2_client(request: Request):
 
 def get_ic_prep_workflow(request: Request):
     return request.app.state.ic_prep_workflow
+
+
+def get_task_store(request: Request):
+    return request.app.state.task_store

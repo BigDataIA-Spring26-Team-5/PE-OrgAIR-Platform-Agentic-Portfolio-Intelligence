@@ -787,7 +787,10 @@ async def ic_prep(
 
 
 @router.get("/diagnostics")
-async def rag_diagnostics(vs: VectorStore = Depends(_get_vector_store)):
+async def rag_diagnostics(
+    vs: VectorStore = Depends(_get_vector_store),
+    retriever: HybridRetriever = Depends(_get_retriever),
+):
     """Full ChromaDB diagnostic: accurate per-company document counts."""
     from collections import Counter
     total = vs.count()
@@ -797,6 +800,10 @@ async def rag_diagnostics(vs: VectorStore = Depends(_get_vector_store)):
             "by_company": {},
             "by_source_type": {},
             "by_dimension": {},
+            "sparse_index": {
+                "document_count": retriever.sparse_index_size,
+                "bm25_initialized": retriever._bm25 is not None,
+            },
         }
 
     all_metas = vs.get_all_metadata()
@@ -809,6 +816,10 @@ async def rag_diagnostics(vs: VectorStore = Depends(_get_vector_store)):
         "by_company": by_company,
         "by_source_type": by_source,
         "by_dimension": by_dimension,
+        "sparse_index": {
+            "document_count": retriever.sparse_index_size,
+            "bm25_initialized": retriever._bm25 is not None,
+        },
     }
 
 

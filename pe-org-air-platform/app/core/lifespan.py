@@ -60,6 +60,10 @@ def _create_singletons(app: FastAPI) -> None:
 
     app.state.hybrid_retriever = HybridRetriever()
 
+    # Rebuild BM25 from persistent ChromaDB data (full coverage, not seed-query subset)
+    doc_count = app.state.hybrid_retriever.rebuild_sparse_index_from_chroma()
+    logger.info("BM25 sparse index rebuilt from ChromaDB: %d documents", doc_count)
+
     # ── 4. Composed services (depend on singletons above) ────────────────
     from app.services.justification.generator import JustificationGenerator
     from app.services.workflows.ic_prep import ICPrepWorkflow
@@ -100,6 +104,19 @@ def _create_singletons(app: FastAPI) -> None:
     app.state.patent_signal_service = PatentSignalService()
     app.state.tech_signal_service = TechSignalService()
     app.state.leadership_service = LeadershipSignalService()
+
+    # ── 6. Task Store (Redis-backed) ────────────────────────────────────
+    from app.services.task_store import TaskStore
+    from app.services.cache import get_cache
+
+    cache = get_cache()
+    if cache:
+        app.state.task_store = TaskStore(redis_client=cache.client)
+    else:
+        import redis as _redis
+        from app.config import settings
+        _client = _redis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=5)
+        app.state.task_store = TaskStore(redis_client=_client)
 
 
 def _cleanup_singletons(app: FastAPI) -> None:

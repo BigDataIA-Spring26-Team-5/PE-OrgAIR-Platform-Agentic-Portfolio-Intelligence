@@ -11,7 +11,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from app.core.dependencies import get_company_repository, get_industry_repository
 from app.core.exceptions import raise_error
@@ -70,6 +70,12 @@ class CompanyResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     cache: Optional[CacheInfo] = None
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def company_id(self) -> str:
+        """String company_id for CS5 client compatibility."""
+        return str(self.id)
 
     class Config:
         from_attributes = True

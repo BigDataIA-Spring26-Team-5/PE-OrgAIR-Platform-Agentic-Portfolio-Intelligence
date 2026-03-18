@@ -4,6 +4,7 @@ routers/orgair_scoring.py — CS3 Task 6.4 Endpoints
 Endpoints:
   POST /api/v1/scoring/orgair/results         — Generate results/*.json for submission
   POST /api/v1/scoring/orgair/portfolio       — Compute Org-AI-R for all 5 CS3 companies
+  GET  /api/v1/assessments/{ticker}           — Read-only assessment in CompanyAssessmentRead shape
 """
 
 from fastapi import APIRouter, Depends
@@ -13,7 +14,14 @@ import logging
 import time
 
 from app.config.company_mappings import CS3_PORTFOLIO
-from app.core.dependencies import get_composite_scoring_service
+from app.core.dependencies import (
+    get_company_repository,
+    get_composite_scoring_repository,
+    get_composite_scoring_service,
+    get_scoring_repository,
+)
+from app.core.exceptions import raise_error
+from app.schemas.scoring import CompanyAssessmentRead, DimensionScoreRead
 from app.services.composite_scoring_service import OrgAIRResponse
 
 logger = logging.getLogger(__name__)
@@ -159,4 +167,108 @@ async def score_portfolio_orgair(
         results=results,
         summary_table=summary,
         duration_seconds=round(time.time() - start, 2),
+    )
+
+
+# =====================================================================
+# GET /api/v1/assessments/{ticker} — Read-only assessment
+# =====================================================================
+
+SCORE_LEVEL_THRESHOLDS = [
+    (90, 5, "Leading"),
+    (70, 4, "Advanced"),
+    (50, 3, "Developing"),
+    (30, 2, "Emerging"),
+    (0, 1, "Nascent"),
+]
+
+
+def _score_to_level(score: float) -> tuple[int, str]:
+    for threshold, level, name in SCORE_LEVEL_THRESHOLDS:
+        if score >= threshold:
+            return level, name
+    return 1, "Nascent"
+
+
+assessment_router = APIRouter(prefix="/api/v1", tags=["Assessments"])
+
+
+@assessment_router.get(
+    "/assessments/{ticker}",
+    response_model=CompanyAssessmentRead,
+    summary="Get company assessment by ticker",
+    description=(
+        "Returns the full CompanyAssessmentRead shape for a company, "
+        "including composite scores (Org-AI-R, V^R, H^R, TC, PF, synergy) "
+        "and per-dimension scores read from Snowflake."
+    ),
+)
+async def get_assessment(
+    ticker: str,
+    company_repo=Depends(get_company_repository),
+    scoring_repo=Depends(get_scoring_repository),
+    composite_repo=Depends(get_composite_scoring_repository),
+):
+    ticker = ticker.upper()
+
+    # 1. Verify the company exists
+    company = company_repo.get_by_ticker(ticker)
+    if not company:
+        raise_error(404, "COMPANY_NOT_FOUND", f"Company '{ticker}' not found")
+
+    company_id = str(company["id"])
+
+    # 2. Read composite scores from SCORING table
+    tc_vr_row = composite_repo.fetch_tc_vr_row(ticker)
+    orgair_row = composite_repo.fetch_orgair_row(ticker)
+
+    tc = float(tc_vr_row["tc"]) if tc_vr_row and tc_vr_row.get("tc") is not None else 0.0
+    vr = float(tc_vr_row["vr"]) if tc_vr_row and tc_vr_row.get("vr") is not None else 0.0
+    pf = float(tc_vr_row["pf"]) if tc_vr_row and tc_vr_row.get("pf") is not None else 0.0
+    hr = float(tc_vr_row["hr"]) if tc_vr_row and tc_vr_row.get("hr") is not None else 0.0
+    org_air = float(orgair_row["org_air"]) if orgair_row and orgair_row.get("org_air") is not None else 0.0
+    synergy = 0.0
+
+    # Prefer more detailed orgair row fields when available
+    if orgair_row:
+        if orgair_row.get("vr_score") is not None:
+            vr = float(orgair_row["vr_score"])
+        if orgair_row.get("hr_score") is not None:
+            hr = float(orgair_row["hr_score"])
+        if orgair_row.get("synergy_score") is not None:
+            synergy = float(orgair_row["synergy_score"])
+
+    scored_at = None
+    if tc_vr_row and tc_vr_row.get("scored_at"):
+        scored_at = str(tc_vr_row["scored_at"])
+    elif orgair_row and orgair_row.get("scored_at"):
+        scored_at = str(orgair_row["scored_at"])
+
+    # 3. Read dimension scores from evidence_dimension_scores
+    dim_rows = scoring_repo.get_dimension_scores(ticker)
+    dimension_scores: Dict[str, DimensionScoreRead] = {}
+    for row in dim_rows:
+        dim_name = row["dimension"]
+        score = float(row["score"]) if row.get("score") is not None else 0.0
+        level, level_name = _score_to_level(score)
+        dimension_scores[dim_name] = DimensionScoreRead(
+            dimension=dim_name,
+            score=score,
+            level=level,
+            level_name=level_name,
+            confidence_interval=(0.0, 0.0),
+            evidence_count=int(row.get("source_count", 0)),
+        )
+
+    return CompanyAssessmentRead(
+        company_id=company_id,
+        ticker=ticker,
+        org_air_score=org_air,
+        vr_score=vr,
+        hr_score=hr,
+        synergy_score=synergy,
+        talent_concentration=tc,
+        position_factor=pf,
+        dimension_scores=dimension_scores,
+        scored_at=scored_at,
     )

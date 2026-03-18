@@ -22,6 +22,7 @@ from app.routers.tc_vr_scoring import router as tc_vr_router
 from app.routers.position_factor import router as pf_router
 from app.routers.hr_scoring import router as hr_router
 from app.routers.orgair_scoring import router as orgair_router
+from app.routers.orgair_scoring import assessment_router
 from app.routers.analyst_notes import router as analyst_notes_router
 
 from app.core.exceptions import validation_exception_handler
@@ -173,6 +174,7 @@ app.include_router(tc_vr_router)             # TC + V^R computation
 app.include_router(pf_router)               # Position Factor computation
 app.include_router(hr_router)               # Human Capital Risk computation
 app.include_router(orgair_router)           # Synergy + Org-AI-R computation
+app.include_router(assessment_router)      # GET /assessments/{ticker} — read-only assessment
 app.include_router(analyst_notes_router)   # CS4 — Analyst Notes (interview, DD findings, data room)
 
 

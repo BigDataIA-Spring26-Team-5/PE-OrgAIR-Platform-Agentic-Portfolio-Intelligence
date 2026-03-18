@@ -42,6 +42,10 @@ def get_scoring_repository(request: Request):
     return request.app.state.scoring_repository
 
 
+def get_composite_scoring_repository(request: Request):
+    return request.app.state.composite_scoring_repository
+
+
 # ── Service providers ────────────────────────────────────────────────────────
 
 def get_vector_store(request: Request):

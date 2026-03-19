@@ -15,8 +15,9 @@ Changes in this version:
 """
 
 import json
-import logging
+import time
 import uuid
+import structlog
 from decimal import Decimal
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
@@ -33,7 +34,7 @@ from app.repositories.document_repository import DocumentRepository
 from app.services.utils import make_singleton_factory
 from app.core.errors import NotFoundError, PipelineIncompleteError
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 # Minimum words needed for reliable rubric scoring
 _MIN_SECTION_WORDS = 3000
@@ -91,8 +92,12 @@ class ScoringService:
         ticker = ticker.upper()
         self._s3_chunk_cache.clear()
 
+        start = time.perf_counter()
+        logger.info("scoring_started", ticker=ticker)
+
         # Phase 3B prerequisite check
         prereqs = self.check_scoring_prerequisites(ticker)
+        logger.info("scoring_prerequisites_checked", ticker=ticker, ready=prereqs["ready"])
         if not prereqs["ready"]:
             raise PipelineIncompleteError(ticker=ticker, missing_steps=prereqs["missing"])
 
@@ -103,6 +108,12 @@ class ScoringService:
             result = self._run_scoring_pipeline(ticker)
             dimensions_written = len(result.get("dimension_scores") or [])
             self.scoring_repo.complete_scoring_run(run_id, dimensions_written)
+            for row in (result.get("dimension_scores") or []):
+                logger.info("dimension_scored", ticker=ticker,
+                            dimension=row["dimension"], score=row["score"])
+            duration = time.perf_counter() - start
+            logger.info("scoring_completed", ticker=ticker,
+                        duration_seconds=round(duration, 2))
             return result
         except Exception as exc:
             self.scoring_repo.fail_scoring_run(run_id, str(exc))
@@ -110,40 +121,32 @@ class ScoringService:
 
     def _run_scoring_pipeline(self, ticker: str) -> Dict[str, Any]:
         """Internal: execute the full scoring pipeline (already upper-cased ticker)."""
-        logger.info(f"{'='*60}")
-        logger.info(f"🎯 CS3 SCORING PIPELINE: {ticker}")
-        logger.info(f"{'='*60}")
-
         company = self.company_repo.get_by_ticker(ticker)
         if not company:
             raise NotFoundError("company", ticker)
         company_id = str(company["id"])
 
         # Step 1: CS2 signals
-        logger.info(f"📊 Step 1: Fetching CS2 signal scores...")
         cs2_evidence = self._fetch_cs2_signals(company_id, ticker)
-        logger.info(f"   Found {len(cs2_evidence)} CS2 signal scores")
+        logger.info("pipeline_step", ticker=ticker, step="cs2_signals",
+                    evidence_count=len(cs2_evidence))
 
         # Step 2: SEC rubric scores
-        logger.info(f"📄 Step 2: Fetching SEC sections & rubric scoring...")
         sec_evidence, sec_details = self._fetch_and_score_sec_sections(ticker)
-        logger.info(f"   Found {len(sec_evidence)} SEC section scores")
+        logger.info("pipeline_step", ticker=ticker, step="sec_rubric",
+                    evidence_count=len(sec_evidence))
 
         # Step 2.5a: Board governance
-        logger.info(f"🏛️  Step 2.5a: Fetching board governance from S3...")
         board_evidence = self._fetch_board_governance(ticker)
-        if board_evidence:
-            logger.info(f"   ✅ board_composition: {board_evidence.raw_score}")
-        else:
-            logger.info(f"   ⚠️  board_composition: not found in S3")
+        logger.info("pipeline_step", ticker=ticker, step="board_governance",
+                    found=board_evidence is not None,
+                    score=float(board_evidence.raw_score) if board_evidence else None)
 
         # Step 2.5b: Culture signal
-        logger.info(f"💬 Step 2.5b: Fetching culture signal from S3...")
         culture_evidence = self._fetch_culture_signal(ticker)
-        if culture_evidence:
-            logger.info(f"   ✅ glassdoor_reviews: {culture_evidence.raw_score}")
-        else:
-            logger.info(f"   ⚠️  glassdoor_reviews: not found in S3")
+        logger.info("pipeline_step", ticker=ticker, step="culture_signal",
+                    found=culture_evidence is not None,
+                    score=float(culture_evidence.raw_score) if culture_evidence else None)
 
         # Step 3: Combine all evidence
         all_evidence = cs2_evidence + sec_evidence
@@ -151,10 +154,10 @@ class ScoringService:
             all_evidence.append(board_evidence)
         if culture_evidence:
             all_evidence.append(culture_evidence)
-        logger.info(f"📋 Step 3: Total evidence sources = {len(all_evidence)}")
+        logger.info("pipeline_step", ticker=ticker, step="evidence_combined",
+                    total_sources=len(all_evidence))
 
         # Step 4: Map to dimensions
-        logger.info(f"🔄 Step 4: Mapping evidence to 7 dimensions...")
         dim_scores = self.mapper.map_evidence_to_dimensions(all_evidence)
 
         # Step 5: Build outputs
@@ -163,15 +166,15 @@ class ScoringService:
         coverage = self.mapper.get_coverage_report(all_evidence)
 
         # Step 6: Persist
-        logger.info(f"💾 Step 5: Persisting to Snowflake...")
         persisted = False
         try:
             self.scoring_repo.upsert_mapping_matrix(mapping_matrix)
             self.scoring_repo.upsert_dimension_scores(dimension_summary)
             persisted = True
-            logger.info(f"   ✅ Persisted {len(mapping_matrix)} mapping rows + {len(dimension_summary)} dimension scores")
+            logger.info("pipeline_step", ticker=ticker, step="persisted",
+                        mapping_rows=len(mapping_matrix), dimension_scores=len(dimension_summary))
         except Exception as e:
-            logger.error(f"   ❌ Persistence failed: {e}")
+            logger.error("persistence_failed", ticker=ticker, error=str(e))
 
         result = {
             "ticker": ticker,
@@ -191,17 +194,6 @@ class ScoringService:
             "persisted": persisted,
         }
 
-        logger.info(f"\n{'─'*60}")
-        logger.info(f"📊 DIMENSION SCORES FOR {ticker}:")
-        logger.info(f"{'─'*60}")
-        for row in dimension_summary:
-            logger.info(
-                f"   {row['dimension']:25s} | Score: {row['score']:6.2f} | "
-                f"Conf: {row['confidence']:.3f} | Sources: {row['sources']}"
-            )
-        logger.info(f"{'─'*60}")
-        logger.info(f"✅ Scoring complete for {ticker}")
-
         return result
 
     def score_all_companies(self) -> List[Dict[str, Any]]:
@@ -216,7 +208,7 @@ class ScoringService:
                 result = self.score_company(ticker)
                 results.append(result)
             except Exception as e:
-                logger.error(f"Failed to score {ticker}: {e}")
+                logger.error("score_company_failed", ticker=ticker, error=str(e))
                 results.append({"ticker": ticker, "error": str(e), "persisted": False})
         return results
 
@@ -227,7 +219,7 @@ class ScoringService:
     def _fetch_cs2_signals(self, company_id: str, ticker: str) -> List[EvidenceScore]:
         summary = self.signal_repo.get_summary_by_ticker(ticker)
         if not summary:
-            logger.warning(f"   ⚠️  No signal summary found for {ticker}")
+            logger.warning("no_signal_summary", ticker=ticker)
             return []
 
         evidence = []
@@ -264,9 +256,9 @@ class ScoringService:
                     evidence_count=ev_count,
                     metadata={"from": "company_signal_summaries"},
                 ))
-                logger.info(f"   ✅ {source_enum.value}: {score_val:.1f}")
+                logger.info("cs2_signal_loaded", source=source_enum.value, score=round(float(score_val), 1))
             else:
-                logger.info(f"   ⚠️  {source_enum.value}: no score")
+                logger.warning("cs2_signal_missing", source=source_enum.value)
 
         return evidence
 
@@ -307,12 +299,10 @@ class ScoringService:
                 "board_members": data.get("board_member_count", 0),
             }
 
-            logger.info(
-                f"   📋 Board governance: {gov_score}/100 "
-                f"(tech_committee={meta['has_tech_committee']}, "
-                f"ai_expertise={meta['has_ai_expertise']}, "
-                f"data_officer={meta['has_data_officer']})"
-            )
+            logger.info("board_governance_loaded", ticker=ticker, score=gov_score,
+                        tech_committee=meta['has_tech_committee'],
+                        ai_expertise=meta['has_ai_expertise'],
+                        data_officer=meta['has_data_officer'])
 
             return EvidenceScore(
                 source=SignalSource.BOARD_COMPOSITION,
@@ -322,7 +312,7 @@ class ScoringService:
                 metadata=meta,
             )
         except Exception as e:
-            logger.warning(f"   Board governance load failed for {ticker}: {e}")
+            logger.warning("board_governance_load_failed", ticker=ticker, error=str(e))
             return None
 
     # ------------------------------------------------------------------
@@ -378,12 +368,12 @@ class ScoringService:
                 "source_breakdown": data.get("source_breakdown", {}),
             }
 
-            logger.info(
-                f"   💬 Culture signal: {overall}/100 "
-                f"(inn={meta['innovation_score']}, dd={meta['data_driven_score']}, "
-                f"ai={meta['ai_awareness_score']}, ch={meta['change_readiness_score']}, "
-                f"reviews={review_count})"
-            )
+            logger.info("culture_signal_loaded", ticker=ticker, score=overall,
+                        review_count=review_count,
+                        innovation=meta['innovation_score'],
+                        data_driven=meta['data_driven_score'],
+                        ai_awareness=meta['ai_awareness_score'],
+                        change_readiness=meta['change_readiness_score'])
 
             return EvidenceScore(
                 source=SignalSource.GLASSDOOR_REVIEWS,
@@ -393,7 +383,7 @@ class ScoringService:
                 metadata=meta,
             )
         except Exception as e:
-            logger.warning(f"   Culture signal load failed for {ticker}: {e}")
+            logger.warning("culture_signal_load_failed", ticker=ticker, error=str(e))
             return None
 
     # ------------------------------------------------------------------
@@ -422,29 +412,30 @@ class ScoringService:
             # When text is too short for reliable rubric scoring, fall back
             # to ALL chunks from that filing to get more signal.
             if section_text and len(section_text.split()) < _MIN_SECTION_WORDS:
-                logger.info(
-                    f"   ⚠️  {signal_source_key}: only {len(section_text.split())} words "
-                    f"(below {_MIN_SECTION_WORDS} threshold), trying all-chunks fallback..."
-                )
+                logger.info("sec_section_too_short", ticker=ticker, section=signal_source_key,
+                            word_count=len(section_text.split()), threshold=_MIN_SECTION_WORDS)
                 fallback_text = self._get_all_chunks_text(ticker)
                 if fallback_text and len(fallback_text.split()) > len(section_text.split()):
                     section_text = fallback_text
-                    logger.info(f"   📄 Using all-chunks fallback: {len(section_text.split())} words")
+                    logger.info("sec_section_fallback_used", ticker=ticker,
+                                section=signal_source_key, word_count=len(section_text.split()))
 
             if not section_text:
                 # Also try all-chunks fallback when no section text at all
                 fallback_text = self._get_all_chunks_text(ticker)
                 if fallback_text:
                     section_text = fallback_text
-                    logger.info(f"   📄 {signal_source_key}: no section match, using all-chunks fallback: {len(section_text.split())} words")
+                    logger.info("sec_section_fallback_used", ticker=ticker,
+                                section=signal_source_key, word_count=len(section_text.split()))
 
             if not section_text:
-                logger.info(f"   ⚠️  {signal_source_key}: no section text found")
+                logger.warning("sec_section_not_found", ticker=ticker, section=signal_source_key)
                 details[signal_source_key] = {"found": False, "word_count": 0}
                 continue
 
             word_count = len(section_text.split())
-            logger.info(f"   📄 {signal_source_key}: {word_count} words")
+            logger.info("sec_section_loaded", ticker=ticker, section=signal_source_key,
+                        word_count=word_count)
 
             rubric_dimension = self.SEC_RUBRIC_MAP[signal_source_key]
             rubric_result = self.rubric_scorer.score_dimension(
@@ -476,10 +467,9 @@ class ScoringService:
                 "matched_keywords": rubric_result.matched_keywords[:10],
             }
 
-            logger.info(
-                f"   ✅ {signal_source_key} → rubric [{rubric_dimension}] = "
-                f"{rubric_result.score} ({rubric_result.level.label})"
-            )
+            logger.info("sec_rubric_scored", ticker=ticker, section=signal_source_key,
+                        rubric_dimension=rubric_dimension,
+                        score=float(rubric_result.score), level=rubric_result.level.label)
 
         return evidence, details
 
@@ -496,7 +486,7 @@ class ScoringService:
         if not s3_keys:
             return None
 
-        logger.info(f"   📦 Found {len(s3_keys)} S3 file(s) with target sections")
+        logger.info("s3_section_files_found", ticker=ticker, file_count=len(s3_keys))
 
         section_names_lower = {s.lower() for s in section_names}
         text_parts = []
@@ -514,7 +504,8 @@ class ScoringService:
 
         if text_parts:
             combined = "\n\n".join(text_parts)
-            logger.info(f"   📝 Extracted {len(text_parts)} matching chunks, {len(combined.split())} total words")
+            logger.info("s3_chunks_extracted", ticker=ticker, chunk_count=len(text_parts),
+                        word_count=len(combined.split()))
             return combined
 
         return None
@@ -547,7 +538,8 @@ class ScoringService:
 
         if all_chunks:
             text = "\n\n".join(c.get("content", "") for c in all_chunks if c.get("content"))
-            logger.info(f"   📦 All-chunks fallback: {len(all_chunks)} chunks, {len(text.split())} words for {ticker}")
+            logger.info("all_chunks_fallback_loaded", ticker=ticker,
+                        chunk_count=len(all_chunks), word_count=len(text.split()))
             return text
 
         return None
@@ -563,7 +555,7 @@ class ScoringService:
 
             data = s3.get_file(s3_key)
             if data is None:
-                logger.warning(f"   ⚠️  S3 file not found: {s3_key}")
+                logger.warning("s3_file_not_found", s3_key=s3_key)
                 self._s3_chunk_cache[s3_key] = []
                 return []
 
@@ -582,16 +574,16 @@ class ScoringService:
             else:
                 chunks = []
 
-            logger.info(f"   📦 Loaded {len(chunks)} chunks from S3: {s3_key}")
+            logger.info("s3_chunks_loaded", s3_key=s3_key, chunk_count=len(chunks))
             self._s3_chunk_cache[s3_key] = chunks
             return chunks
 
         except json.JSONDecodeError as e:
-            logger.warning(f"   ⚠️  JSON parse failed for {s3_key}: {e}")
+            logger.warning("s3_json_parse_failed", s3_key=s3_key, error=str(e))
             self._s3_chunk_cache[s3_key] = []
             return []
         except Exception as e:
-            logger.warning(f"   ⚠️  S3 load failed for {s3_key}: {e}")
+            logger.warning("s3_load_failed", s3_key=s3_key, error=str(e))
             self._s3_chunk_cache[s3_key] = []
             return []
 

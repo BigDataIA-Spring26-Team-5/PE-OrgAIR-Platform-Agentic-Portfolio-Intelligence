@@ -21,7 +21,7 @@ from app.prompts.rag_prompts import (
     CHATBOT_SYSTEM,
     CHATBOT_USER,
 )
-import logging
+import structlog
 from app.guardrails.input_guards import validate_ticker, validate_question, validate_dimension
 from app.guardrails.output_guards import check_answer_length, check_answer_grounded, check_no_refusal
 from app.models.enumerations import DIMENSION_ALIAS_MAP
@@ -37,7 +37,7 @@ from app.core.exceptions import raise_error
 from app.core.errors import ValidationError as PlatformValidationError
 from app.config.retrieval_settings import RETRIEVAL_SETTINGS
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 MAX_CONTEXT_CHARS = RETRIEVAL_SETTINGS.max_context_chars
 
@@ -176,12 +176,12 @@ async def _detect_dimension_with_llm(
         raw = str(raw).strip()
         detected = raw.lower().replace('"', "").replace("'", "").split()[0]
         if detected in valid_dims:
-            logger.info(f"rag.llm_dim_detected question={question[:80]} dimension={detected}")
+            logger.info("rag.llm_dim_detected", question=question[:80], dimension=detected)
             return detected, 0.75
-        logger.warning(f"rag.llm_dim_invalid_response question={question[:80]} raw_response={raw[:100]}")
+        logger.warning("rag.llm_dim_invalid_response", question=question[:80], raw_response=raw[:100])
         return None, 0.0
     except Exception as e:
-        logger.warning(f"rag.llm_dim_detection_failed question={question[:80]} error={e}")
+        logger.warning("rag.llm_dim_detection_failed", question=question[:80], error=str(e))
         return None, 0.0
 
 
@@ -378,7 +378,7 @@ async def _retrieve_with_fallback(
                 for r in group_results:
                     diverse_results.append(r)
             except Exception as e:
-                logger.debug("rag.broad_group_search_failed src_types=%s error=%s", src_types, e)
+                logger.debug("rag.broad_group_search_failed", src_types=src_types, error=str(e))
                 continue
 
         if len(diverse_results) >= min_results:
@@ -421,7 +421,9 @@ async def _retrieve_with_fallback(
         if len(results) >= min_results:
             return results
 
-        logger.info(f"rag.fallback_triggered ticker={ticker} dimension={dimension} dim_confidence={dim_confidence} dim_results={len(results)} reason=too_few_dim_results")
+        logger.info("rag.fallback_triggered", ticker=ticker, dimension=dimension,
+                    dim_confidence=dim_confidence, dim_results=len(results),
+                    reason="too_few_dim_results")
 
         # SEC source affinity for SEC-primary dimensions
         # FIX: prioritize Item 1 and Item 7 over Item 1A for non-governance dims
@@ -552,7 +554,7 @@ async def index_company_evidence(
     cs2: CS2Client = Depends(_get_cs2),
 ):
     """Fetch CS2 evidence for a company and index into ChromaDB."""
-    logger.info(f"rag.index_start ticker={ticker} force={force}")
+    logger.info("rag.index_start", ticker=ticker, force=force)
 
     if force:
         st_list = [s.strip() for s in source_types.split(",")] if source_types else None
@@ -580,7 +582,7 @@ async def index_company_evidence(
     retriever.refresh_sparse_index()
     retriever.seed_from_evidence(evidence)
 
-    logger.info(f"rag.index_complete ticker={ticker} indexed_count={count}")
+    logger.info("rag.index_complete", ticker=ticker, indexed_count=count)
     return IndexResponse(indexed_count=count, ticker=ticker, source_counts=dict(source_counts))
 
 
@@ -593,7 +595,7 @@ async def bulk_index_evidence(
     cs2: CS2Client = Depends(_get_cs2),
 ):
     """Index CS2 evidence for multiple tickers in a single call."""
-    logger.info(f"rag.bulk_index_start tickers={req.tickers}")
+    logger.info("rag.bulk_index_start", tickers=req.tickers)
 
     from collections import defaultdict
     results: Dict[str, IndexResponse] = {}
@@ -630,7 +632,7 @@ async def bulk_index_evidence(
             )
         except Exception as e:
             failed[ticker] = str(e)
-            logger.warning(f"rag.bulk_index_ticker_error ticker={ticker} error={e}")
+            logger.warning("rag.bulk_index_ticker_error", ticker=ticker, error=str(e))
 
     retriever.refresh_sparse_index()
     if all_evidence:
@@ -663,7 +665,7 @@ async def search_evidence(
     llm_router: ModelRouter = Depends(_get_router),
 ):
     """Hybrid dense + sparse search with optional HyDE enhancement."""
-    logger.info(f"rag.search_start query_len={len(req.query)} ticker={req.ticker}")
+    logger.info("rag.search_start", query_len=len(req.query), ticker=req.ticker)
 
     source_types = None
     if req.source_types:
@@ -703,7 +705,7 @@ async def search_evidence(
             filter_metadata=filter_meta or None,
         )
 
-    logger.info(f"rag.search_complete result_count={len(results)}")
+    logger.info("rag.search_complete", result_count=len(results))
     return [
         SearchResult(
             doc_id=r.doc_id,
@@ -724,13 +726,13 @@ async def justify_score(
     llm_router: ModelRouter = Depends(_get_router),
 ):
     """Generate IC-ready justification for a dimension score with cited evidence."""
-    logger.info(f"rag.justify_start ticker={ticker} dimension={dimension}")
+    logger.info("rag.justify_start", ticker=ticker, dimension=dimension)
     gen = JustificationGenerator(retriever=retriever, router=llm_router)
 
     try:
         j = await asyncio.to_thread(gen.generate_justification, ticker, dimension)
     except Exception as e:
-        logger.error(f"rag.justify_error ticker={ticker} dimension={dimension} error={e}")
+        logger.error("rag.justify_error", ticker=ticker, dimension=dimension, error=str(e))
         raise_error(500, "RAG_ERROR", "An internal error occurred during RAG processing.")
 
     return JustifyResponse(
@@ -765,11 +767,11 @@ async def ic_prep(
 ):
     """Generate full 7-dimension IC meeting package with recommendation."""
     focus = [d.strip() for d in dimensions.split(",")] if dimensions else None
-    logger.info(f"rag.ic_prep_start ticker={ticker} focus_dimensions={focus}")
+    logger.info("rag.ic_prep_start", ticker=ticker, focus_dimensions=focus)
     try:
         pkg = await workflow.prepare_meeting(ticker, focus_dimensions=focus)
     except Exception as e:
-        logger.error(f"rag.ic_prep_error ticker={ticker} error={e}")
+        logger.error("rag.ic_prep_error", ticker=ticker, error=str(e))
         raise_error(500, "RAG_ERROR", "An internal error occurred during RAG processing.")
 
     dim_scores = {dim: j.score for dim, j in pkg.dimension_justifications.items()}
@@ -843,20 +845,20 @@ async def chatbot_query(
     """
     result = validate_ticker(ticker)
     if not result.passed:
-        logger.warning(f"rag.guardrail_blocked guard=validate_ticker reason={result.reason}")
+        logger.warning("rag.guardrail_blocked", guard="validate_ticker", reason=result.reason)
         raise PlatformValidationError(result.reason)
 
     result = validate_question(question)
     if not result.passed:
-        logger.warning(f"rag.guardrail_blocked guard=validate_question reason={result.reason}")
+        logger.warning("rag.guardrail_blocked", guard="validate_question", reason=result.reason)
         raise PlatformValidationError(result.reason)
 
     result = validate_dimension(dimension)
     if not result.passed:
-        logger.warning(f"rag.guardrail_blocked guard=validate_dimension reason={result.reason}")
+        logger.warning("rag.guardrail_blocked", guard="validate_dimension", reason=result.reason)
         raise PlatformValidationError(result.reason)
 
-    logger.info(f"rag.chatbot_query ticker={ticker} question_len={len(question)}")
+    logger.info("rag.chatbot_query", ticker=ticker, question_len=len(question))
 
     detected_dimension = DIMENSION_ALIAS_MAP.get(dimension, dimension) if dimension else dimension
     dim_confidence = 1.0
@@ -878,9 +880,11 @@ async def chatbot_query(
             if llm_dim is not None:
                 detected_dimension = llm_dim
                 dim_confidence = llm_conf
-                logger.info(f"rag.chatbot_used_llm_dim ticker={ticker} dimension={detected_dimension} confidence={dim_confidence}")
+                logger.info("rag.chatbot_used_llm_dim", ticker=ticker,
+                            dimension=detected_dimension, confidence=dim_confidence)
 
-    logger.info(f"rag.chatbot_dim_final ticker={ticker} dimension={detected_dimension} confidence={dim_confidence}")
+    logger.info("rag.chatbot_dim_final", ticker=ticker, dimension=detected_dimension,
+                confidence=dim_confidence)
 
     results = await _retrieve_with_fallback(
         retriever=retriever,
@@ -942,7 +946,7 @@ async def chatbot_query(
             if score_lines:
                 score_context += "\nDIMENSION SCORES:\n" + "\n".join(score_lines)
     except Exception as e:
-        logger.warning(f"rag.score_enrich_dims_failed error={e}")
+        logger.warning("rag.score_enrich_dims_failed", error=str(e))
 
     try:
         # Signal summary from company_signal_summaries table
@@ -961,7 +965,7 @@ async def chatbot_query(
             if sig_lines:
                 score_context += "\nSIGNAL SCORES:\n" + "\n".join(sig_lines)
     except Exception as e:
-        logger.warning(f"rag.score_enrich_signals_failed error={e}")
+        logger.warning("rag.score_enrich_signals_failed", error=str(e))
 
     try:
         # Culture from S3
@@ -977,7 +981,7 @@ async def chatbot_query(
                 f"Change Readiness={cult_data.get('change_readiness_score', 'N/A')}"
             )
     except Exception as e:
-        logger.warning(f"rag.score_enrich_culture_failed error={e}")
+        logger.warning("rag.score_enrich_culture_failed", error=str(e))
 
     dim_instruction = ""
     if detected_dimension and dim_confidence >= _DIM_CONFIDENCE_THRESHOLD:
@@ -1021,14 +1025,18 @@ async def chatbot_query(
                 "could not be parsed. Please try again."
             )
     except Exception as e:
-        logger.error(f"rag.chatbot_llm_error ticker={ticker} error={e}")
+        logger.error("rag.chatbot_llm_error", ticker=ticker, error=str(e))
         answer = f"Evidence retrieved but could not generate answer: {e}"
+
+    logger.info("rag.chatbot_answer_generated", ticker=ticker, answer_len=len(answer),
+                sources_used=len(results))
 
     answer = check_no_refusal(answer)
     answer = check_answer_grounded(answer, results_sorted[:4])
     length_result = check_answer_length(answer)
     if not length_result.passed:
-        logger.warning(f"rag.guardrail_blocked guard=check_answer_length reason={length_result.reason}")
+        logger.warning("rag.guardrail_blocked", guard="check_answer_length",
+                       reason=length_result.reason)
         answer = f"[Guard: answer quality check failed — {length_result.reason}]"
 
     return {

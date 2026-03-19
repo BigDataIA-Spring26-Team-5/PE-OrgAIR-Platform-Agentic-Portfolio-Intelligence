@@ -8,14 +8,14 @@ app.state, and cleans up at shutdown.
 
 import signal
 import asyncio
-import logging
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI
 
 from app.shutdown import set_shutdown
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 def _create_singletons(app: FastAPI) -> None:
@@ -62,7 +62,7 @@ def _create_singletons(app: FastAPI) -> None:
 
     # Rebuild BM25 from persistent ChromaDB data (full coverage, not seed-query subset)
     doc_count = app.state.hybrid_retriever.rebuild_sparse_index_from_chroma()
-    logger.info("BM25 sparse index rebuilt from ChromaDB: %d documents", doc_count)
+    logger.info("bm25_index_rebuilt", doc_count=doc_count)
 
     # ── 4. Composed services (depend on singletons above) ────────────────
     from app.services.justification.generator import JustificationGenerator
@@ -140,6 +140,9 @@ def _register_windows_signal_handlers():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────────────────────
+    from app.core.logging_config import configure_logging
+    configure_logging()
+
     logger.info("Starting PE Org-AI-R Platform Foundation API...")
     print("Starting PE Org-AI-R Platform Foundation API...")
     print("Swagger UI available at: http://localhost:8000/docs")
@@ -147,14 +150,14 @@ async def lifespan(app: FastAPI):
     from app.core.settings import get_settings
     _settings = get_settings()
     logger.info(
-        "settings_loaded portfolio=%s dim_weights_sum=%.3f alpha=%.2f beta=%.2f",
-        ["NVDA", "JPM", "WMT", "GE", "DG"],
-        sum([
+        "settings_loaded",
+        portfolio=["NVDA", "JPM", "WMT", "GE", "DG"],
+        dim_weights_sum=round(sum([
             _settings.W_DATA_INFRA, _settings.W_AI_GOVERNANCE, _settings.W_TECH_STACK,
             _settings.W_TALENT, _settings.W_LEADERSHIP, _settings.W_USE_CASES, _settings.W_CULTURE,
-        ]),
-        _settings.ALPHA_VR_WEIGHT,
-        _settings.BETA_SYNERGY_WEIGHT,
+        ]), 3),
+        alpha=_settings.ALPHA_VR_WEIGHT,
+        beta=_settings.BETA_SYNERGY_WEIGHT,
     )
 
     _create_singletons(app)

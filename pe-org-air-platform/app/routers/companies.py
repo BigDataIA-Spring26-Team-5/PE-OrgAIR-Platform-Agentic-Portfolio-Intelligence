@@ -107,9 +107,6 @@ class PaginatedCompanyResponse(BaseModel):
 #  Exception Helpers
 
 
-def raise_company_not_found():
-    raise NotFoundError("company", "unknown")
-
 def raise_industry_not_found():
     raise NotFoundError("industry", "unknown")
 

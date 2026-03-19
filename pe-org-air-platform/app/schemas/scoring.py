@@ -32,3 +32,4 @@ class CompanyAssessmentRead(BaseModel):
     position_factor: float = 0.0
     dimension_scores: Dict[str, DimensionScoreRead] = {}
     scored_at: Optional[str] = None
+    confidence_interval: Tuple[float, float] = (0.0, 0.0)

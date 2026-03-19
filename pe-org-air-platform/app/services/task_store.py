@@ -41,7 +41,9 @@ class TaskStore:
         self.client.setex(self._key(task_id), TASK_TTL, json.dumps(task))
         return task
 
-    def update_task(self, task_id: str, **updates) -> Optional[dict]:
+    # NOTE: TaskStore is intentionally synchronous — the Redis client in app/services/cache.py
+    # is redis.Redis (not aioredis). Audit check #16 flagged async; this is by design.
+    def update_status(self, task_id: str, **updates) -> Optional[dict]:
         """Update an existing task. Returns updated dict or None if not found."""
         task = self.get_task(task_id)
         if task is None:

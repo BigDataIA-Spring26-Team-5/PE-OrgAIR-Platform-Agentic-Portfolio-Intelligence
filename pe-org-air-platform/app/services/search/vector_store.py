@@ -95,7 +95,7 @@ class VectorStore:
                 logger.warning("sentence_transformer_failed error=%s", e)
 
         if self._use_cloud:
-            self._collection_id = self._get_or_create_collection()
+            self._collection_id = self._ensure_collection()
             if self._collection_id:
                 logger.info("chroma_cloud_connected collection_id=%s", self._collection_id)
             else:
@@ -114,7 +114,7 @@ class VectorStore:
     def _base_url(self) -> str:
         return f"{CHROMA_BASE}/tenants/{self._tenant}/databases/{self._database}"
 
-    def _get_or_create_collection(self) -> Optional[str]:
+    def _ensure_collection(self) -> Optional[str]:
         """Get or create the pe_evidence collection in Chroma Cloud."""
         try:
             # Check existing collections
@@ -541,7 +541,7 @@ class VectorStore:
                     headers=self._headers(),
                     timeout=15,
                 )
-                self._collection_id = self._get_or_create_collection()
+                self._collection_id = self._ensure_collection()
             except Exception as e:
                 logger.warning("cloud_wipe_failed error=%s", e)
             return count

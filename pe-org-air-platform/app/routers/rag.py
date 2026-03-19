@@ -804,7 +804,7 @@ async def rag_diagnostics(
             "by_source_type": {},
             "by_dimension": {},
             "sparse_index": {
-                "document_count": retriever.sparse_index_size,
+                "sparse_index_size": retriever.sparse_index_size,
                 "bm25_initialized": retriever._bm25 is not None,
             },
         }
@@ -820,7 +820,7 @@ async def rag_diagnostics(
         "by_source_type": by_source,
         "by_dimension": by_dimension,
         "sparse_index": {
-            "document_count": retriever.sparse_index_size,
+            "sparse_index_size": retriever.sparse_index_size,
             "bm25_initialized": retriever._bm25 is not None,
         },
     }

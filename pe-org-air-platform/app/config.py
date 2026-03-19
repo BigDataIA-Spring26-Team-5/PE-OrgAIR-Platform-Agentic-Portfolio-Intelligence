@@ -107,6 +107,23 @@ class Settings(BaseSettings):
     W_USE_CASES: float = Field(default=0.12, ge=0.0, le=1.0)
     W_CULTURE: float = Field(default=0.10, ge=0.0, le=1.0)
 
+    # Sector HR baselines (used by /config/sector-baselines and HR scoring)
+    SECTOR_HR_BASELINE_TECHNOLOGY: float = 85.0
+    SECTOR_HR_BASELINE_FINANCIAL_SERVICES: float = 78.0
+    SECTOR_HR_BASELINE_HEALTHCARE: float = 75.0
+    SECTOR_HR_BASELINE_MANUFACTURING: float = 70.0
+    SECTOR_HR_BASELINE_RETAIL: float = 65.0
+    SECTOR_HR_BASELINE_ENERGY: float = 60.0
+    SECTOR_HR_BASELINE_BUSINESS_SERVICES: float = 72.0
+    SECTOR_HR_BASELINE_CONSUMER: float = 68.0
+
+    # ChromaDB
+    CHROMA_PERSIST_DIR: str = "./chroma_data"
+    CHROMA_COLLECTION_NAME: str = "pe_evidence"
+
+    # Groq
+    GROQ_API_KEY: Optional[str] = None
+
     # HITL Thresholds
     HITL_SCORE_CHANGE_THRESHOLD: float = Field(default=15.0, ge=5, le=30)
     HITL_EBITDA_PROJECTION_THRESHOLD: float = Field(default=10.0, ge=5, le=25)

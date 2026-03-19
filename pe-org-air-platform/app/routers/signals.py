@@ -140,7 +140,7 @@ async def run_signal_collection(
 ):
     """Background task for signal collection."""
     logger.info(f"Starting signal collection: task_id={task_id}, company={company_id}")
-    task_store.update_task(task_id, status="running")
+    task_store.update_status(task_id, status="running")
 
     company = company_repo.get_by_ticker(company_id.upper())
     if not company:
@@ -148,7 +148,7 @@ async def run_signal_collection(
         company = next((c for c in companies if str(c.get("id")) == company_id), None)
 
     if not company:
-        task_store.update_task(
+        task_store.update_status(
             task_id,
             status="failed",
             error=f"Company not found: {company_id}",
@@ -173,7 +173,7 @@ async def run_signal_collection(
     }
 
     for i, category in enumerate(categories):
-        task_store.update_task(task_id, progress={
+        task_store.update_status(task_id, progress={
             "total_categories": len(categories),
             "completed_categories": i,
             "current_category": category,
@@ -193,7 +193,7 @@ async def run_signal_collection(
             result["signals"][category] = {"status": "failed", "error": str(e)}
             result["errors"].append(f"{category}: {str(e)}")
 
-    task_store.update_task(
+    task_store.update_status(
         task_id,
         status="completed" if not result["errors"] else "completed_with_errors",
         completed_at=datetime.now(timezone.utc).isoformat(),

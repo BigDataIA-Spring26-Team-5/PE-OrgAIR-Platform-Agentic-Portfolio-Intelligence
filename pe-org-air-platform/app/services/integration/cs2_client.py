@@ -11,6 +11,7 @@ from datetime import datetime
 
 import httpx
 
+from app.clients.base import BaseAPIClient
 from app.utils.id_utils import stable_evidence_id
 from app.prompts.rag_prompts import CS2_KEYWORD_EXPANSION_USER, CS2_SIGNAL_SUMMARY_USER
 
@@ -18,7 +19,8 @@ logger = logging.getLogger(__name__)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = "llama-3.1-8b-instant"
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_API_URL = f"{GROQ_BASE_URL}/chat/completions"  # kept for backward compat
 
 SIGNAL_KEYWORDS: Dict[str, List[str]] = {
     "technology_hiring": [
@@ -189,69 +191,19 @@ def _content_to_signal_category(text: str) -> str:
 
 
 async def expand_keywords_with_groq(ticker: str, category: str) -> List[str]:
-    """
-    Use Groq LLM to expand keywords for a given signal category and company.
-    Falls back to the static SIGNAL_KEYWORDS list if Groq is unavailable.
-    """
+    """Thin wrapper — delegates to CS2Client._expand_keywords_with_groq for callers outside the class."""
     if not GROQ_API_KEY:
         return SIGNAL_KEYWORDS.get(category, [])
-
-    base_keywords = SIGNAL_KEYWORDS.get(category, [])
-    prompt = CS2_KEYWORD_EXPANSION_USER.format(
-        ticker=ticker,
-        category=category,
-        base_keywords=", ".join(base_keywords),
-    )
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                GROQ_API_URL,
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": GROQ_MODEL,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 200,
-                    "temperature": 0.3,
-                },
-            )
-            resp.raise_for_status()
-            text = resp.json()["choices"][0]["message"]["content"].strip()
-            expanded = [kw.strip() for kw in text.split(",") if kw.strip()]
-            return list(set(base_keywords + expanded))
-    except Exception as e:
-        logger.warning("groq_keyword_expansion_failed ticker=%s category=%s error=%s", ticker, category, e)
-        return base_keywords
+    _client = CS2Client()
+    return await _client._expand_keywords_with_groq(ticker, category)
 
 
 async def get_groq_signal_summary(ticker: str, category: str, raw_data: Dict[str, Any]) -> Optional[str]:
-    """
-    Use Groq to generate a short natural language summary of a signal result.
-    Returns None if Groq is unavailable.
-    """
+    """Thin wrapper — delegates to CS2Client._get_groq_signal_summary for callers outside the class."""
     if not GROQ_API_KEY:
         return None
-    prompt = CS2_SIGNAL_SUMMARY_USER.format(
-        category=category,
-        ticker=ticker,
-        data=json.dumps(raw_data, default=str)[:1500],
-    )
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                GROQ_API_URL,
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": GROQ_MODEL,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 300,
-                    "temperature": 0.4,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        logger.warning("groq_summary_failed ticker=%s category=%s error=%s", ticker, category, e)
-        return None
+    _client = CS2Client()
+    return await _client._get_groq_signal_summary(ticker, category, raw_data)
 
 
 @dataclass
@@ -269,12 +221,71 @@ class CS2Evidence:
     indexed_in_cs4: bool = False
 
 
-class CS2Client:
+class CS2Client(BaseAPIClient):
     """Fetches evidence directly from S3, mirroring vr_scoring_service._load_jobs_from_s3()."""
 
     def __init__(self):
+        super().__init__(
+            base_url=GROQ_BASE_URL,
+            service_name="groq",
+            timeout=15.0,
+            max_retries=3,
+        )
         from app.services.s3_storage import get_s3_service
         self._s3 = get_s3_service()
+
+    async def _expand_keywords_with_groq(self, ticker: str, category: str) -> List[str]:
+        """Use Groq LLM to expand keywords for a given signal category and company."""
+        base_keywords = SIGNAL_KEYWORDS.get(category, [])
+        if not GROQ_API_KEY:
+            return base_keywords
+        prompt = CS2_KEYWORD_EXPANSION_USER.format(
+            ticker=ticker,
+            category=category,
+            base_keywords=", ".join(base_keywords),
+        )
+        try:
+            result = await self.post(
+                "/chat/completions",
+                json_body={
+                    "model": GROQ_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 200,
+                    "temperature": 0.3,
+                },
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            )
+            text = result["choices"][0]["message"]["content"].strip()
+            expanded = [kw.strip() for kw in text.split(",") if kw.strip()]
+            return list(set(base_keywords + expanded))
+        except Exception as e:
+            logger.warning("groq_keyword_expansion_failed ticker=%s category=%s error=%s", ticker, category, e)
+            return base_keywords
+
+    async def _get_groq_signal_summary(self, ticker: str, category: str, raw_data: Dict[str, Any]) -> Optional[str]:
+        """Use Groq to generate a short natural language summary of a signal result."""
+        if not GROQ_API_KEY:
+            return None
+        prompt = CS2_SIGNAL_SUMMARY_USER.format(
+            category=category,
+            ticker=ticker,
+            data=json.dumps(raw_data, default=str)[:1500],
+        )
+        try:
+            result = await self.post(
+                "/chat/completions",
+                json_body={
+                    "model": GROQ_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 300,
+                    "temperature": 0.4,
+                },
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            )
+            return result["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            logger.warning("groq_summary_failed ticker=%s category=%s error=%s", ticker, category, e)
+            return None
 
     # ------------------------------------------------------------------
     # Public API
@@ -582,7 +593,7 @@ class CS2Client:
 
     async def get_keywords_for_category(self, ticker: str, category: str) -> List[str]:
         """Groq-expanded keywords for a signal category; falls back to static list."""
-        return await expand_keywords_with_groq(ticker, category)
+        return await self._expand_keywords_with_groq(ticker, category)
 
     async def get_full_evidence_with_keywords(self, ticker: str, category: str) -> Dict[str, Any]:
         """Evidence from S3 for ticker/category + Groq-expanded keywords + IC summary."""
@@ -590,8 +601,8 @@ class CS2Client:
             ticker=ticker,
             signal_categories=[category] if category else None,
         )
-        keywords = await expand_keywords_with_groq(ticker, category)
-        summary = await get_groq_signal_summary(ticker, category, {
+        keywords = await self._expand_keywords_with_groq(ticker, category)
+        summary = await self._get_groq_signal_summary(ticker, category, {
             "evidence_count": len(evidence),
             "category": category,
         })

@@ -321,6 +321,9 @@ class HybridRetriever:
             logger.warning("rebuild_sparse_skipped reason=bm25_unavailable")
             return 0
 
+        # Uses get_all_documents() instead of collection.get() — retrieves complete corpus
+        # including metadata, not just a seed-query subset. This is intentionally more
+        # comprehensive than the plan's original collection.get() approach.
         all_results = self._vector_store.get_all_documents()
         if not all_results:
             logger.info("rebuild_sparse_skipped reason=no_documents_in_chroma")

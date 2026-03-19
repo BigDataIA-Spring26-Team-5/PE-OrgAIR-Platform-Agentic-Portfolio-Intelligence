@@ -34,5 +34,10 @@ class CompanyRead(BaseModel):
     def company_id(self) -> str:
         return str(self.id)
 
+    @computed_field  # type: ignore[misc]
+    @property
+    def revenue_mm(self) -> Optional[float]:
+        return self.revenue_millions
+
     class Config:
         from_attributes = True

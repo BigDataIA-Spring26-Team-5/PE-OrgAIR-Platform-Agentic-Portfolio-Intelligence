@@ -14,6 +14,7 @@ import structlog
 from fastapi import FastAPI
 
 from app.shutdown import set_shutdown
+from app.services.cache import get_cache
 
 logger = structlog.get_logger()
 
@@ -119,9 +120,6 @@ def _create_singletons(app: FastAPI) -> None:
         app.state.task_store = TaskStore(redis_client=_client)
 
 
-def _cleanup_singletons(app: FastAPI) -> None:
-    """Clean up singletons at shutdown. Minimal for now — repos use context managers."""
-    logger.info("Singleton cleanup complete")
 
 
 def _register_windows_signal_handlers():
@@ -180,5 +178,35 @@ async def lifespan(app: FastAPI):
 
     # ── Shutdown ─────────────────────────────────────────────────────────
     print("Shutting down PE Org-AI-R Platform Foundation API...")
+    logger.info("lifespan_shutdown_begin")
     set_shutdown()
-    _cleanup_singletons(app)
+
+    # Close Redis (sync client — no await needed)
+    try:
+        cache = get_cache()
+        if cache and cache.client:
+            cache.client.close()
+    except Exception as e:
+        logger.warning("shutdown_redis_close_error", error=str(e))
+
+    # Close CS2Client (has async close() from BaseAPIClient)
+    if hasattr(app.state, "cs2_client"):
+        try:
+            await app.state.cs2_client.close()
+        except Exception as e:
+            logger.warning("shutdown_cs2_close_error", error=str(e))
+
+    # Iterate app.state for any remaining .close() methods
+    for attr_name in list(vars(app.state).keys()):
+        obj = getattr(app.state, attr_name, None)
+        if obj is None or obj is app.state.cs2_client:
+            continue
+        if hasattr(obj, "close") and callable(obj.close):
+            try:
+                result = obj.close()
+                if hasattr(result, "__await__"):
+                    await result
+            except Exception as e:
+                logger.warning("shutdown_close_error", resource=attr_name, error=str(e))
+
+    logger.info("lifespan_shutdown_complete")

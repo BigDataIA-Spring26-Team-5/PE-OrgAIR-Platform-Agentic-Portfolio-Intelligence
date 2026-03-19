@@ -144,6 +144,19 @@ async def lifespan(app: FastAPI):
     print("Starting PE Org-AI-R Platform Foundation API...")
     print("Swagger UI available at: http://localhost:8000/docs")
 
+    from app.core.settings import get_settings
+    _settings = get_settings()
+    logger.info(
+        "settings_loaded portfolio=%s dim_weights_sum=%.3f alpha=%.2f beta=%.2f",
+        ["NVDA", "JPM", "WMT", "GE", "DG"],
+        sum([
+            _settings.W_DATA_INFRA, _settings.W_AI_GOVERNANCE, _settings.W_TECH_STACK,
+            _settings.W_TALENT, _settings.W_LEADERSHIP, _settings.W_USE_CASES, _settings.W_CULTURE,
+        ]),
+        _settings.ALPHA_VR_WEIGHT,
+        _settings.BETA_SYNERGY_WEIGHT,
+    )
+
     _create_singletons(app)
     logger.info("All singletons created and attached to app.state")
 

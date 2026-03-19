@@ -374,6 +374,24 @@ class SignalRepository(BaseRepository):
             finally:
                 cur.close()
 
+    def get_signal_categories_for_ticker(self, ticker: str) -> List[str]:
+        """Return distinct signal categories that exist for a ticker."""
+        sql = """
+        SELECT DISTINCT s.category
+        FROM external_signals s
+        JOIN companies c ON s.company_id = c.id
+        WHERE UPPER(c.ticker) = %s
+          AND s.category IS NOT NULL
+        ORDER BY s.category
+        """
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(sql, (ticker.upper(),))
+                return [row[0] for row in cur.fetchall()]
+            finally:
+                cur.close()
+
     def delete_summary(self, company_id: str) -> bool:
         """Delete signal summary for a company."""
         sql = "DELETE FROM company_signal_summaries WHERE company_id = %s"

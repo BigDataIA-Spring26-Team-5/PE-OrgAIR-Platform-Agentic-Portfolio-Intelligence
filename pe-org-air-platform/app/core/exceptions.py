@@ -17,6 +17,26 @@ from fastapi import Request, status
 # Shared raise_error helper (used by companies, industries, assessments routers)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Repository exception classes (imported by base.py)
+# ---------------------------------------------------------------------------
+
+class RepositoryException(Exception):
+    """Base exception for repository-layer errors."""
+
+
+class DatabaseConnectionException(RepositoryException):
+    """Raised when a Snowflake connection cannot be established."""
+
+
+class DuplicateEntityException(RepositoryException):
+    """Raised on UNIQUE constraint violation."""
+
+
+class ForeignKeyViolationException(RepositoryException):
+    """Raised on FOREIGN KEY constraint violation."""
+
+
 def raise_error(status_code: int, error_code: str, message: str) -> None:
     # DEPRECATED: Use app.core.errors.PlatformError subclasses instead.
     """Raise an HTTPException with a standardised error detail dict."""

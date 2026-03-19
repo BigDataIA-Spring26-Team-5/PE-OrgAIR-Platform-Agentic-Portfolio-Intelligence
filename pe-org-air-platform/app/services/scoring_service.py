@@ -16,6 +16,7 @@ Changes in this version:
 
 import json
 import logging
+import uuid
 from decimal import Decimal
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
@@ -28,8 +29,9 @@ from app.repositories.scoring_repository import get_scoring_repository
 from app.repositories.signal_repository import get_signal_repository
 from app.repositories.chunk_repository import get_chunk_repository
 from app.repositories.company_repository import CompanyRepository
+from app.repositories.document_repository import DocumentRepository
 from app.services.utils import make_singleton_factory
-from app.core.errors import NotFoundError
+from app.core.errors import NotFoundError, PipelineIncompleteError
 
 logger = logging.getLogger(__name__)
 
@@ -52,19 +54,62 @@ class ScoringService:
         "sec_item_7": "leadership_vision",
     }
 
+    REQUIRED_SIGNAL_CATEGORIES = [
+        "technology_hiring",
+        "innovation_activity",
+        "digital_presence",
+        "leadership_signals",
+    ]
+
     def __init__(self):
         self.mapper = EvidenceMapper()
         self.rubric_scorer = RubricScorer()
         self.scoring_repo = get_scoring_repository()
         self.signal_repo = get_signal_repository()
         self.company_repo = CompanyRepository()
+        self.document_repo = DocumentRepository()
         self._s3_chunk_cache: Dict[str, List[Dict]] = {}
+
+    def check_scoring_prerequisites(self, ticker: str) -> Dict[str, Any]:
+        """Check whether all CS2 data required for scoring exists."""
+        available = self.signal_repo.get_signal_categories_for_ticker(ticker)
+        missing = [f"signal:{c}" for c in self.REQUIRED_SIGNAL_CATEGORIES if c not in available]
+
+        chunk_count = self.document_repo.get_chunk_count_for_ticker(ticker)
+        if chunk_count == 0:
+            missing.append("document_chunks")
+
+        return {
+            "ready": len(missing) == 0,
+            "missing": missing,
+            "available_signals": available,
+            "chunk_count": chunk_count,
+        }
 
     def score_company(self, ticker: str) -> Dict[str, Any]:
         """Full scoring pipeline for a company."""
         ticker = ticker.upper()
         self._s3_chunk_cache.clear()
 
+        # Phase 3B prerequisite check
+        prereqs = self.check_scoring_prerequisites(ticker)
+        if not prereqs["ready"]:
+            raise PipelineIncompleteError(ticker=ticker, missing_steps=prereqs["missing"])
+
+        # Phase 3A run tracking
+        run_id = str(uuid.uuid4())
+        self.scoring_repo.create_scoring_run(run_id, ticker)
+        try:
+            result = self._run_scoring_pipeline(ticker)
+            dimensions_written = len(result.get("dimension_scores") or [])
+            self.scoring_repo.complete_scoring_run(run_id, dimensions_written)
+            return result
+        except Exception as exc:
+            self.scoring_repo.fail_scoring_run(run_id, str(exc))
+            raise
+
+    def _run_scoring_pipeline(self, ticker: str) -> Dict[str, Any]:
+        """Internal: execute the full scoring pipeline (already upper-cased ticker)."""
         logger.info(f"{'='*60}")
         logger.info(f"🎯 CS3 SCORING PIPELINE: {ticker}")
         logger.info(f"{'='*60}")

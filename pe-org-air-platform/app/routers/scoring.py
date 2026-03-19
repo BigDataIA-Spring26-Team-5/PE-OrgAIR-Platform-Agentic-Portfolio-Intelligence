@@ -19,7 +19,7 @@ import time
 
 from app.core.dependencies import get_scoring_service, get_scoring_repository
 from app.core.exceptions import raise_error
-from app.core.errors import NotFoundError
+from app.core.errors import NotFoundError, PlatformError, PipelineIncompleteError, ScoringInProgressError
 from app.utils.serialization import serialize_row
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,26 @@ async def score_all_companies(
 
 
 # =====================================================================
+# GET /api/v1/scoring/{ticker}/prerequisites — Check CS2 data readiness
+# NOTE: Must be registered before POST /scoring/{ticker} to avoid conflicts.
+# =====================================================================
+
+@router.get(
+    "/scoring/{ticker}/prerequisites",
+    summary="Check CS2 data prerequisites for scoring",
+    description="Check whether all CS2 signal data and document chunks required for scoring exist.",
+    tags=["CS3 Dimensions Scoring"],
+)
+async def get_scoring_prerequisites(
+    ticker: str,
+    service=Depends(get_scoring_service),
+):
+    """Check whether all CS2 data required for scoring exists."""
+    ticker = ticker.upper()
+    return service.check_scoring_prerequisites(ticker)
+
+
+# =====================================================================
 # POST /api/v1/scoring/{ticker} — Score one company
 # =====================================================================
 
@@ -171,8 +191,10 @@ async def score_company(
             persisted=result.get("persisted", False),
             duration_seconds=round(time.time() - start, 2),
         )
+    except PlatformError:
+        raise  # let middleware translate to 424/409/404/etc.
     except Exception as e:
-        logger.error(f"Scoring failed for {ticker}: {e}", exc_info=True)
+        logger.error(f"scoring_unexpected_error ticker=%s error=%s", ticker, e, exc_info=True)
         return ScoringResponse(
             ticker=ticker,
             status="failed",
@@ -207,6 +229,15 @@ async def get_dimension_scores(
     ticker = ticker.upper()
 
     try:
+        latest_run = repo.get_latest_scoring_run(ticker)
+        if latest_run and latest_run["status"] == "running":
+            raise ScoringInProgressError(ticker=ticker, run_id=latest_run["run_id"])
+        if latest_run and latest_run["status"] == "failed":
+            raise PipelineIncompleteError(
+                ticker=ticker,
+                missing_steps=[f"scoring (last run failed: {latest_run.get('error_message', 'unknown')})"],
+            )
+
         rows = repo.get_dimension_scores(ticker)
 
         if not rows:
@@ -219,6 +250,8 @@ async def get_dimension_scores(
             scores=clean_rows,
             score_count=len(clean_rows),
         )
+    except PlatformError:
+        raise  # let middleware translate to 404/409/424/etc.
     except Exception as e:
         if hasattr(e, 'status_code'):
             raise

@@ -354,6 +354,13 @@ class DocumentRepository(BaseRepository):
             finally:
                 cur.close()
 
+    def get_chunk_count_for_ticker(self, ticker: str) -> int:
+        """Return total chunk count across all documents for a ticker."""
+        stats = self.get_company_stats(ticker.upper())
+        if not stats:
+            return 0
+        return int(stats.get("chunks", 0) or 0)
+
     def get_all_company_stats(self) -> List[Dict]:
         """Get stats for all companies in a single grouped query."""
         sql = """

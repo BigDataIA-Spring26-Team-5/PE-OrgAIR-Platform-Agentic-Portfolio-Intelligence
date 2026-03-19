@@ -32,20 +32,20 @@
 
 ### Phase 2: Standardize the Service Contract Layer
 - [x] **2A** — Reconcile Data Shapes (Shared Schemas)
-- [ ] **2B** — Unified Error Hierarchy with HTTP Translation
-- [ ] **2C** — Base API Client with Retry Logic
+- [x] **2B** — Unified Error Hierarchy with HTTP Translation
+- [x] **2C** — Base API Client with Retry Logic
 
 ### Phase 3: Scoring Pipeline Integrity
-- [ ] **3A** — Scoring Run Tracking
-- [ ] **3B** — CS2 Prerequisite Checks Before Scoring
+- [x] **3A** — Scoring Run Tracking
+- [x] **3B** — CS2 Prerequisite Checks Before Scoring
 
 ### Phase 4: Configuration Consolidation
-- [ ] **4A** — Single Pydantic Settings Class
-- [ ] **4B** — Expose Configuration via API + MCP-ready Resource
+- [x] **4A** — Single Pydantic Settings Class
+- [x] **4B** — Expose Configuration via API + MCP-ready Resource
 
 ### Phase 5: Observability Foundation
-- [ ] **5A** — Request Correlation IDs
-- [ ] **5B** — Structured Logging Baseline
+- [x] **5A** — Request Correlation IDs
+- [x] **5B** — Structured Logging Baseline
 
 ---
 
@@ -1714,6 +1714,157 @@ Before starting CS5, verify:
 - [ ] Structured logs with correlation IDs visible in terminal
 
 **You are now ready for CS5.**
+
+---
+
+## Changes Made
+
+Summary of actual file changes per refactor commit.
+
+---
+
+### Refactor 1 — Phase 1A: Dependency Injection Lifecycle
+**Created:**
+- `app/core/lifespan.py` — startup/shutdown lifecycle manager; all singletons created on `app.state`
+
+**Modified:**
+- `app/core/dependencies.py` — replaced `dict.setdefault` singleton cache with `Depends()` providers
+- `app/main.py` — integrated `lifespan` context manager; stripped inline startup code
+
+---
+
+### Refactor 2 — Phase 1B + 1C: BM25 Persistence & Redis Task State
+**Created:**
+- `app/services/task_store.py` — `TaskStore`: Redis-backed background task state (`create_task`, `update_status`, `get_task`)
+
+**Modified:**
+- `app/core/dependencies.py` — added `get_task_store` provider
+- `app/core/lifespan.py` — added BM25 rebuild from ChromaDB on startup
+- `app/routers/rag.py` — wired sparse index rebuild diagnostic
+- `app/routers/signals.py` — replaced in-memory `_task_store` dict with injected `TaskStore`
+- `app/services/retrieval/hybrid.py` — added `rebuild_sparse_index_from_chroma()` and `sparse_index_size` property
+- `app/services/search/vector_store.py` — added helpers for BM25 index sourcing
+
+---
+
+### Refactor 3 — Phase 2A: Canonical Schemas & Assessment Endpoint
+**Created:**
+- `app/schemas/__init__.py`
+- `app/schemas/company.py` — `CompanyRead` with CS5 compatibility properties
+- `app/schemas/dimensions.py` — canonical `Dimension` enum
+- `app/schemas/evidence.py` — `EvidenceRead` schema
+- `app/schemas/scoring.py` — `CompanyAssessmentRead`, `DimensionScoreRead`
+
+**Modified:**
+- `app/core/dependencies.py` — added `get_assessment_repository` provider
+- `app/main.py` — registered assessment router
+- `app/routers/companies.py` — updated response models to `CompanyRead`
+- `app/routers/orgair_scoring.py` — added `GET /api/v1/assessments/{ticker}` endpoint
+
+---
+
+### Refactor 4 — Phase 2B: Unified Error Hierarchy
+**Created:**
+- `app/core/errors.py` — `PlatformError` base + subclasses: `NotFoundError` (404), `ConflictError` (409), `ValidationError` (422), `ExternalServiceError` (502), `PipelineIncompleteError` (424), `ScoringInProgressError` (409); `ERROR_STATUS_MAP`
+- `REFACTOR_PLAN.md` — initial plan file committed
+- `API_DOCS.md` — API documentation
+
+**Modified:**
+- `app/main.py` — registered `platform_error_handler` and `global_exception_handler` using `ERROR_STATUS_MAP`
+- `app/prompts/rag_prompts.py`, `app/services/base_signal_service.py`, `app/services/document_collector.py`, `app/services/document_parsing_service.py`, `app/services/job_data_service.py`, `app/services/leadership_service.py`, `app/services/scoring_service.py` — updated to raise `PlatformError` subclasses
+
+---
+
+### Refactor 5 — Phase 2C: Base API Client with Retry Logic
+**Created:**
+- `app/clients/__init__.py`
+- `app/clients/base.py` — `BaseAPIClient`: async HTTP with exponential backoff, raises `ExternalServiceError`/`NotFoundError`
+
+**Modified:**
+- `app/core/__init__.py` — re-exported error classes for convenience
+- `app/core/exceptions.py` — stripped legacy helpers, kept `raise_error()` shim
+- `app/routers/analyst_notes.py`, `app/routers/common.py`, `app/routers/companies.py`, `app/routers/documents.py`, `app/routers/orgair_scoring.py`, `app/routers/rag.py`, `app/routers/scoring.py`, `app/routers/signals.py` — updated error imports to `app/core/errors`
+- `app/services/composite_scoring_service.py`, `app/services/document_chunking_service.py`, `app/services/document_parsing_service.py`, `app/services/groq_enrichment.py`, `app/services/integration/cs1_client.py`, `app/services/job_signal_service.py`, `app/services/llm/router.py` — updated error imports
+
+---
+
+### Refactor 6 — Phase 3A + 3B: Scoring Run Tracking & Prerequisites
+**Created:**
+- `app/database/scoring_runs_schema.sql` — Snowflake table DDL for `scoring_runs`
+
+**Modified:**
+- `app/core/exceptions.py` — added `ScoringInProgressError`, `PipelineIncompleteError`
+- `app/repositories/document_repository.py` — added `get_chunk_count()` method
+- `app/repositories/scoring_repository.py` — added `create_scoring_run()`, `complete_scoring_run()`, `fail_scoring_run()`, `get_latest_scoring_run()`
+- `app/repositories/signal_repository.py` — added `get_signal_categories()` method
+- `app/routers/scoring.py` — wrapped scoring endpoint with prerequisite guard and run lifecycle
+- `app/services/scoring_service.py` — added `check_scoring_prerequisites()`, wrapped pipeline with run tracking
+
+---
+
+### Refactor 7 — Phase 4A: Single Pydantic Settings Class
+**Created:**
+- `app/core/settings.py` — `Settings(BaseSettings)` with all env-driven config; dimension weights validated to sum to 1.0
+
+**Modified:**
+- `.env.example` — added `DIMENSION_WEIGHTS_*` entries
+- `app/core/lifespan.py` — instantiates `Settings` at startup
+- `app/models/dimension.py` — `DIMENSION_WEIGHTS` now imported from `settings` instead of hardcoded
+
+---
+
+### Refactor 8 — Phase 5A: Request Correlation IDs
+**Created:**
+- `app/middleware/__init__.py`
+- `app/middleware/correlation.py` — `CorrelationIdMiddleware`: assigns `X-Correlation-ID` to every request/response; `get_correlation_id()` for log injection
+
+**Modified:**
+- `app/core/dependencies.py` — exported `get_correlation_id`
+- `app/main.py` — registered `CorrelationIdMiddleware`
+
+---
+
+### Refactor 9 — Phase 5B: Structured Logging
+**Created:**
+- `app/core/logging_config.py` — `configure_logging()`: structlog processors, JSON formatter, correlation ID injection
+
+**Modified:**
+- `app/core/lifespan.py` — calls `configure_logging()` at startup
+- `app/routers/rag.py` — structured logging for chatbot question, retrieval, guardrail steps
+- `app/services/llm/router.py` — logs model, task type, duration, token count
+- `app/services/scoring_service.py` — logs `scoring_started`, prerequisites, per-dimension scores, `scoring_completed`
+
+---
+
+### Refactor 10 — Phase 4B: Config API + Final Wiring
+**Created:**
+- `app/routers/config.py` — endpoints: `GET /api/v1/config/scoring-parameters`, `/dimension-weights`, `/sector-baselines`, `/portfolio`
+
+**Modified:**
+- `app/config.py` — added sector baseline defaults and portfolio constants
+- `app/core/lifespan.py` — additional startup wiring
+- `app/main.py` — registered config router
+- `app/routers/rag.py`, `app/routers/signals.py` — minor wiring fixes
+- `app/schemas/company.py`, `app/schemas/dimensions.py`, `app/schemas/scoring.py` — minor schema additions
+- `app/services/integration/cs2_client.py` — refactored to inherit from `BaseAPIClient`
+- `app/services/retrieval/hybrid.py`, `app/services/search/vector_store.py` — additional properties exposed
+- `app/services/task_store.py` — minor fixes
+
+---
+
+### Cleanup Commit — Code Reduction Pass
+Removed dead code, simplified implementations. Net result: **−602 lines**.
+
+**Modified:**
+- `app/pipelines/board_analyzer.py` — −43 lines (removed unused methods)
+- `app/pipelines/glassdoor_collector.py` — −35 lines
+- `app/pipelines/job_signals.py` — −6 lines
+- `app/pipelines/tech_signals.py` — −29 lines
+- `app/services/collection/analyst_notes.py` — major simplification (942 → ~600 lines)
+- `app/services/integration/cs1_client.py` — simplified (255 → ~150 lines)
+- `app/services/retrieval/dimension_mapper.py` — simplified (327 → ~200 lines)
+- `app/services/tech_signal_service.py` — −7 lines
+- `app/services/workflows/ic_prep.py` — significant reduction (816 → ~500 lines)
 
 ---
 

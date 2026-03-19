@@ -11,6 +11,7 @@ Changes in this version (v4 — Option 3):
 
 import json
 import logging
+import structlog
 import os
 import re
 import sys
@@ -37,8 +38,7 @@ for _p in [str(_PROJECT_ROOT), str(_APP_DIR)]:
 
 load_dotenv(_PROJECT_ROOT / ".env")
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)

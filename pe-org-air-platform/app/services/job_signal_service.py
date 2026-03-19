@@ -1,4 +1,3 @@
-# app/services/job_signal_service.py
 """
 Job Signal Service — Technology Hiring
 
@@ -11,7 +10,7 @@ FIX: Confidence now uses the value from calculate_job_score() in the pipeline
      Previously this service had its own custom confidence formula that
      overrode the PDF-compliant one.
 """
-import logging
+import structlog
 from typing import Dict
 from datetime import datetime, timezone
 
@@ -19,16 +18,11 @@ from app.services.base_signal_service import BaseSignalService
 from app.services.job_data_service import get_job_data_service
 from app.services.s3_storage import get_s3_service
 from app.repositories.company_repository import CompanyRepository
-from app.repositories.signal_repository import get_signal_repository
+from app.repositories.signal_repository import SignalRepository
 from app.services.utils import make_singleton_factory
 from app.core.errors import NotFoundError
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)-8s | %(message)s',
-    datefmt='%H:%M:%S'
-)
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class JobSignalService(BaseSignalService):
@@ -37,11 +31,11 @@ class JobSignalService(BaseSignalService):
     signal_category = "technology_hiring"
     summary_field = "hiring_score"
 
-    def __init__(self):
+    def __init__(self, company_repo=None, signal_repo=None):
         self.job_data_service = get_job_data_service()
         self.s3_service = get_s3_service()
-        self.company_repo = CompanyRepository()
-        self.signal_repo = get_signal_repository()
+        self.company_repo = company_repo or CompanyRepository()
+        self.signal_repo = signal_repo or SignalRepository()
 
     async def _collect(self, ticker: str, company_id: str, company: dict,
                        force_refresh: bool = False) -> dict:

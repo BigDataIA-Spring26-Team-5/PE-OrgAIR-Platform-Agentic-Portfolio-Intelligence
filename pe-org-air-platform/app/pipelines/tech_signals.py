@@ -50,16 +50,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
+import structlog
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
 
-from app.config import settings
+from app.core.settings import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 # ---------------------------------------------------------------------------

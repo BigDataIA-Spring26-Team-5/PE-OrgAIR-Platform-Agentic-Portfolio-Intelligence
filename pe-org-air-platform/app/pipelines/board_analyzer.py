@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
+import structlog
 from multiprocessing import context
 import re
 import time
@@ -17,10 +17,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 from app.services.s3_storage import S3StorageService, get_s3_service
-from app.repositories.document_repository import DocumentRepository, get_document_repository
+from app.repositories.document_repository import DocumentRepository
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
-logger = logging.getLogger("board_analyzer")
+logger = structlog.get_logger()
 
 D = Decimal
 
@@ -169,7 +168,7 @@ def load_proxy_data(ticker: str, s3: Optional[S3StorageService] = None, doc_repo
     if use_s3:
         try:
             s3 = s3 or get_s3_service()
-            doc_repo = doc_repo or get_document_repository()
+            doc_repo = doc_repo or DocumentRepository()
             proxy = _load_proxy_from_s3(ticker, s3, doc_repo)
             if proxy and len(proxy.text_content) > 500:
                 logger.info(f"[{ticker}] Loaded: {len(proxy.text_content):,} chars, {len(proxy.tables)} tables")

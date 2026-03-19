@@ -1,30 +1,25 @@
 import json
-import logging
+import structlog
 from typing import List, Dict, Optional
 from dataclasses import asdict
 from uuid import uuid4
 from app.pipelines.chunking import create_chunker, DocumentChunk
 from app.services.s3_storage import get_s3_service
-from app.repositories.document_repository import get_document_repository
-from app.repositories.chunk_repository import get_chunk_repository
+from app.repositories.document_repository import DocumentRepository
+from app.repositories.chunk_repository import ChunkRepository
 from app.services.utils import make_singleton_factory
 from app.core.errors import NotFoundError
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)-8s | %(message)s',
-    datefmt='%H:%M:%S'
-)
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class DocumentChunkingService:
     """Service to orchestrate document chunking"""
-    
-    def __init__(self):
+
+    def __init__(self, document_repo=None, chunk_repo=None):
         self.s3_service = get_s3_service()
-        self.doc_repo = get_document_repository()
-        self.chunk_repo = get_chunk_repository()
+        self.doc_repo = document_repo or DocumentRepository()
+        self.chunk_repo = chunk_repo or ChunkRepository()
     
     def _get_parsed_s3_key(self, ticker: str, filing_type: str, filing_date: str) -> str:
         """Get S3 key for parsed content"""

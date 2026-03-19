@@ -5,7 +5,7 @@ app/routers/companies.py
 Handles company CRUD operations with Redis caching.
 """
 
-import logging
+import structlog
 from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
@@ -14,7 +14,6 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from pydantic import BaseModel, Field, computed_field, model_validator
 
 from app.core.dependencies import get_company_repository, get_industry_repository
-from app.core.exceptions import raise_error
 from app.core.errors import NotFoundError, ConflictError
 from app.repositories.company_repository import CompanyRepository
 from app.repositories.industry_repository import IndustryRepository
@@ -27,7 +26,7 @@ from app.services.cache import (
 )
 from app.services.groq_enrichment import enrich_company_metadata, enrich_portfolio_metadata, get_dimension_keywords
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1", tags=["Companies"])
 

@@ -1096,8 +1096,8 @@ class CompositeScoringService:
         except Exception as e:
             logger.warning(f"[{ticker}] S3 save failed (non-fatal): {e}")
 
-        from app.repositories.composite_scoring_repository import get_composite_scoring_repo
-        repo = get_composite_scoring_repo()
+        from app.repositories.composite_scoring_repository import CompositeScoringRepository
+        repo = CompositeScoringRepository()
 
         try:
             bd = result.tc_breakdown
@@ -1154,8 +1154,8 @@ class CompositeScoringService:
         except Exception as e:
             logger.warning(f"[{ticker}] S3 save failed (non-fatal): {e}")
 
-        from app.repositories.composite_scoring_repository import get_composite_scoring_repo
-        repo = get_composite_scoring_repo()
+        from app.repositories.composite_scoring_repository import CompositeScoringRepository
+        repo = CompositeScoringRepository()
 
         try:
             repo.upsert_scoring_pf(ticker, result.position_factor)
@@ -1197,8 +1197,8 @@ class CompositeScoringService:
         except Exception as e:
             logger.warning(f"[{ticker}] S3 save failed (non-fatal): {e}")
 
-        from app.repositories.composite_scoring_repository import get_composite_scoring_repo
-        repo = get_composite_scoring_repo()
+        from app.repositories.composite_scoring_repository import CompositeScoringRepository
+        repo = CompositeScoringRepository()
 
         try:
             repo.upsert_scoring_hr(ticker, result.hr_score)
@@ -1238,8 +1238,8 @@ class CompositeScoringService:
         except Exception as e:
             logger.warning(f"[{ticker}] S3 save failed (non-fatal): {e}")
 
-        from app.repositories.composite_scoring_repository import get_composite_scoring_repo
-        repo = get_composite_scoring_repo()
+        from app.repositories.composite_scoring_repository import CompositeScoringRepository
+        repo = CompositeScoringRepository()
 
         try:
             b = result.breakdown

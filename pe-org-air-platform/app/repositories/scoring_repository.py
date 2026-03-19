@@ -9,12 +9,12 @@ Tables:
 Follows existing repo pattern: singleton, get_snowflake_connection(), cursor-based.
 """
 
-import logging
+import structlog
 from typing import Dict, List, Optional
 from uuid import uuid4
 from app.repositories.base import BaseRepository
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class ScoringRepository(BaseRepository):
@@ -510,11 +510,3 @@ class ScoringRepository(BaseRepository):
             return False
 
 
-# Singleton
-_repo: Optional[ScoringRepository] = None
-
-def get_scoring_repository() -> ScoringRepository:
-    global _repo
-    if _repo is None:
-        _repo = ScoringRepository()
-    return _repo

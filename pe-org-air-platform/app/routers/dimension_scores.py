@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from app.models.dimension import DIMENSION_WEIGHTS
 from app.services.cache import cached_query, TTL_DIMENSION_WEIGHTS
-from app.core.exceptions import raise_error
+from app.core.errors import PlatformError
 
 
 # ROUTER CONFIGURATION
@@ -52,10 +52,9 @@ def _build_weights_response() -> DimensionWeightsResponse:
     is_valid = 0.999 <= total_weight <= 1.001
 
     if not is_valid:
-        raise_error(
-            500,
-            "WEIGHTS_MISCONFIGURED",
+        raise PlatformError(
             f"Dimension weights misconfigured. Sum is {total_weight}, expected 1.0",
+            "WEIGHTS_MISCONFIGURED",
         )
 
     return DimensionWeightsResponse(
@@ -87,8 +86,4 @@ async def get_dimension_weights() -> DimensionWeightsResponse:
     except Exception as e:
         if hasattr(e, 'status_code'):
             raise
-        raise_error(
-            500,
-            "INTERNAL_ERROR",
-            "Failed to retrieve weights configuration.",
-        )
+        raise PlatformError("Failed to retrieve weights configuration.", "INTERNAL_ERROR")

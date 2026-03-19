@@ -10,14 +10,14 @@ Already registered in main.py as tc_vr_router.
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import List, Dict, Any
-import logging
+import structlog
 import time
 
 from app.config.company_mappings import CS3_PORTFOLIO
 from app.core.dependencies import get_composite_scoring_service
 from app.services.composite_scoring_service import TCVRResponse
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1/scoring", tags=["CS3 TC + V^R Scoring"])
 

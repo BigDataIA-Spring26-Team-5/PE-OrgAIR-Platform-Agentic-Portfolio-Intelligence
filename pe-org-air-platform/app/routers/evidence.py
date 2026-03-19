@@ -19,7 +19,6 @@ from app.core.dependencies import (
     get_document_repository,
     get_signal_repository,
 )
-from app.core.exceptions import raise_error
 from app.routers.common import get_company_or_404
 from app.services.evidence_service import build_document_summary
 from app.models.evidence import (

@@ -7,15 +7,10 @@ Custom exception classes for repository operations.
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi import Request, status
 
-
-# ---------------------------------------------------------------------------
-# Shared raise_error helper (used by companies, industries, assessments routers)
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Repository exception classes (imported by base.py)
@@ -35,20 +30,6 @@ class DuplicateEntityException(RepositoryException):
 
 class ForeignKeyViolationException(RepositoryException):
     """Raised on FOREIGN KEY constraint violation."""
-
-
-def raise_error(status_code: int, error_code: str, message: str) -> None:
-    # DEPRECATED: Use app.core.errors.PlatformError subclasses instead.
-    """Raise an HTTPException with a standardised error detail dict."""
-    raise HTTPException(
-        status_code=status_code,
-        detail={
-            "error_code": error_code,
-            "message": message,
-            "details": None,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        },
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+import structlog
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Dict
@@ -11,7 +11,7 @@ from app.services.integration.cs1_client import Company, Sector
 from app.services.integration.cs3_client import CompanyAssessment, DimensionScore, score_to_level
 from app.services.justification.generator import JustificationGenerator, ScoreJustification
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 DIMENSIONS = [
     "data_infrastructure",
@@ -49,19 +49,13 @@ class ICPrepWorkflow:
         composite_repo=None,
         generator: Optional[JustificationGenerator] = None,
     ):
-        if company_repo is None:
-            from app.repositories.company_repository import CompanyRepository
-            company_repo = CompanyRepository()
-        if scoring_repo is None:
-            from app.repositories.scoring_repository import get_scoring_repository
-            scoring_repo = get_scoring_repository()
-        if composite_repo is None:
-            from app.repositories.composite_scoring_repository import get_composite_scoring_repo
-            composite_repo = get_composite_scoring_repo()
-        self.company_repo = company_repo
-        self.scoring_repo = scoring_repo
-        self.composite_repo = composite_repo
-        self.generator = generator or JustificationGenerator(scoring_repo=scoring_repo)
+        from app.repositories.company_repository import CompanyRepository
+        from app.repositories.scoring_repository import ScoringRepository
+        from app.repositories.composite_scoring_repository import CompositeScoringRepository
+        self.company_repo = company_repo or CompanyRepository()
+        self.scoring_repo = scoring_repo or ScoringRepository()
+        self.composite_repo = composite_repo or CompositeScoringRepository()
+        self.generator = generator or JustificationGenerator(scoring_repo=self.scoring_repo)
 
     async def prepare_meeting(
         self,

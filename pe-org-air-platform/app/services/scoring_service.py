@@ -26,9 +26,9 @@ from app.scoring.evidence_mapper import (
     EvidenceMapper, EvidenceScore, SignalSource, Dimension,
 )
 from app.scoring.rubric_scorer import RubricScorer
-from app.repositories.scoring_repository import get_scoring_repository
-from app.repositories.signal_repository import get_signal_repository
-from app.repositories.chunk_repository import get_chunk_repository
+from app.repositories.scoring_repository import ScoringRepository
+from app.repositories.signal_repository import SignalRepository
+from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.company_repository import CompanyRepository
 from app.repositories.document_repository import DocumentRepository
 from app.services.utils import make_singleton_factory
@@ -62,13 +62,15 @@ class ScoringService:
         "leadership_signals",
     ]
 
-    def __init__(self):
+    def __init__(self, company_repo=None, scoring_repo=None, signal_repo=None,
+                 document_repo=None, chunk_repo=None):
         self.mapper = EvidenceMapper()
         self.rubric_scorer = RubricScorer()
-        self.scoring_repo = get_scoring_repository()
-        self.signal_repo = get_signal_repository()
-        self.company_repo = CompanyRepository()
-        self.document_repo = DocumentRepository()
+        self.scoring_repo = scoring_repo or ScoringRepository()
+        self.signal_repo = signal_repo or SignalRepository()
+        self.company_repo = company_repo or CompanyRepository()
+        self.document_repo = document_repo or DocumentRepository()
+        self.chunk_repo = chunk_repo or ChunkRepository()
         self._s3_chunk_cache: Dict[str, List[Dict]] = {}
 
     def check_scoring_prerequisites(self, ticker: str) -> Dict[str, Any]:
@@ -397,7 +399,7 @@ class ScoringService:
         details = {}
 
         # One Snowflake connection for all three SEC section lookups
-        s3_keys_by_section = get_chunk_repository().get_s3_keys_for_section_map(
+        s3_keys_by_section = self.chunk_repo.get_s3_keys_for_section_map(
             ticker, self.SEC_SECTION_MAP
         )
 
@@ -481,7 +483,7 @@ class ScoringService:
     ) -> Optional[str]:
         """Get concatenated section text from S3 chunk files."""
         if s3_keys is None:
-            s3_keys = get_chunk_repository().get_s3_keys_by_sections(ticker, section_names)
+            s3_keys = self.chunk_repo.get_s3_keys_by_sections(ticker, section_names)
 
         if not s3_keys:
             return None
@@ -523,7 +525,7 @@ class ScoringService:
                 return "\n\n".join(c.get("content", "") for c in chunks if c.get("content"))
             return None
 
-        s3_keys = get_chunk_repository().get_all_s3_keys(ticker)
+        s3_keys = self.chunk_repo.get_all_s3_keys(ticker)
 
         if not s3_keys:
             self._s3_chunk_cache[cache_key] = []

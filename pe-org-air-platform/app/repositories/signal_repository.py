@@ -1,12 +1,12 @@
 # app/repositories/signal_repository.py
 import json
-import logging
+import structlog
 from typing import List, Dict, Optional
 from uuid import uuid4
 from datetime import datetime, timezone
 from app.repositories.base import BaseRepository
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class SignalRepository(BaseRepository):
@@ -405,11 +405,3 @@ class SignalRepository(BaseRepository):
                 cur.close()
 
 
-# Singleton
-_repo: Optional[SignalRepository] = None
-
-def get_signal_repository() -> SignalRepository:
-    global _repo
-    if _repo is None:
-        _repo = SignalRepository()
-    return _repo

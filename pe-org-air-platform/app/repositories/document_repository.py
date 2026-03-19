@@ -1,10 +1,10 @@
 from typing import List, Dict, Optional
 from uuid import uuid4
 from datetime import datetime
-import logging
+import structlog
 from app.repositories.base import BaseRepository
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 class DocumentRepository(BaseRepository):
     """Repository for document metadata in Snowflake"""
@@ -511,11 +511,3 @@ class DocumentRepository(BaseRepository):
                 cur.close()
 
 
-# Singleton
-_repo: Optional[DocumentRepository] = None
-
-def get_document_repository() -> DocumentRepository:
-    global _repo
-    if _repo is None:
-        _repo = DocumentRepository()
-    return _repo

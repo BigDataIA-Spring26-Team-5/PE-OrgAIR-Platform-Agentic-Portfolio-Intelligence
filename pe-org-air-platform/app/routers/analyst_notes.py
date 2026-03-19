@@ -10,7 +10,7 @@ Endpoints:
 """
 from __future__ import annotations
 
-import logging
+import structlog
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
@@ -19,10 +19,9 @@ from pydantic import BaseModel, Field
 from app.repositories.company_repository import CompanyRepository
 from app.services.collection.analyst_notes import AnalystNotesCollector
 from app.core.dependencies import get_company_repository, get_analyst_notes_collector
-from app.core.exceptions import raise_error
-from app.core.errors import NotFoundError
+from app.core.errors import NotFoundError, ExternalServiceError
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1/analyst-notes", tags=["Analyst Notes"])
 
@@ -152,8 +151,8 @@ async def submit_interview(
             s3_key=note.s3_key if note else None,
         )
     except Exception as e:
-        logger.error("submit_interview failed company_id=%s: %s", company_id, e, exc_info=True)
-        raise_error(500, "SUBMIT_FAILED", "Failed to submit interview transcript.")
+        logger.error("submit_interview_failed", company_id=company_id, error=str(e), exc_info=True)
+        raise ExternalServiceError("analyst_notes", "Failed to submit interview transcript.")
 
 
 # =====================================================================
@@ -193,8 +192,8 @@ async def submit_dd_finding(
             s3_key=note.s3_key if note else None,
         )
     except Exception as e:
-        logger.error("submit_dd_finding failed company_id=%s: %s", company_id, e, exc_info=True)
-        raise_error(500, "SUBMIT_FAILED", "Failed to submit DD finding.")
+        logger.error("submit_dd_finding_failed", company_id=company_id, error=str(e), exc_info=True)
+        raise ExternalServiceError("analyst_notes", "Failed to submit DD finding.")
 
 
 # =====================================================================
@@ -233,8 +232,8 @@ async def submit_data_room(
             s3_key=note.s3_key if note else None,
         )
     except Exception as e:
-        logger.error("submit_data_room failed company_id=%s: %s", company_id, e, exc_info=True)
-        raise_error(500, "SUBMIT_FAILED", "Failed to submit data room summary.")
+        logger.error("submit_data_room_failed", company_id=company_id, error=str(e), exc_info=True)
+        raise ExternalServiceError("analyst_notes", "Failed to submit data room summary.")
 
 
 # =====================================================================
@@ -261,8 +260,8 @@ async def list_notes(
             notes=[_note_to_response(n) for n in notes],
         )
     except Exception as e:
-        logger.error("list_notes failed company_id=%s: %s", company_id, e, exc_info=True)
-        raise_error(500, "LIST_FAILED", "Failed to list analyst notes.")
+        logger.error("list_notes_failed", company_id=company_id, error=str(e), exc_info=True)
+        raise ExternalServiceError("analyst_notes", "Failed to list analyst notes.")
 
 
 # =====================================================================
@@ -285,11 +284,11 @@ async def get_note(
     try:
         note = collector.get_note(note_id)
     except Exception as e:
-        logger.error("get_note failed note_id=%s: %s", note_id, e, exc_info=True)
-        raise_error(500, "FETCH_FAILED", "Failed to fetch analyst note.")
+        logger.error("get_note_failed", note_id=note_id, error=str(e), exc_info=True)
+        raise ExternalServiceError("analyst_notes", "Failed to fetch analyst note.")
 
     if note is None:
-        raise_error(404, "NOTE_NOT_FOUND", f"Note '{note_id}' not found.")
+        raise NotFoundError("note", note_id)
 
     return _note_to_response(note)
 
@@ -321,5 +320,5 @@ async def load_from_snowflake(
             notes=[_note_to_response(n) for n in notes],
         )
     except Exception as e:
-        logger.error("load_from_snowflake failed company_id=%s: %s", company_id, e, exc_info=True)
-        raise_error(500, "LOAD_FAILED", "Failed to load notes from Snowflake.")
+        logger.error("load_from_snowflake_failed", company_id=company_id, error=str(e), exc_info=True)
+        raise ExternalServiceError("analyst_notes", "Failed to load notes from Snowflake.")

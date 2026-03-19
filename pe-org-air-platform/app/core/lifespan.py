@@ -28,6 +28,7 @@ def _create_singletons(app: FastAPI) -> None:
     from app.repositories.assessment_repository import AssessmentRepository
     from app.repositories.dimension_score_repository import DimensionScoreRepository
     from app.repositories.document_repository import DocumentRepository
+    from app.repositories.chunk_repository import ChunkRepository
     from app.repositories.signal_repository import SignalRepository
     from app.repositories.scoring_repository import ScoringRepository
     from app.repositories.composite_scoring_repository import CompositeScoringRepository
@@ -38,6 +39,7 @@ def _create_singletons(app: FastAPI) -> None:
     app.state.assessment_repository = AssessmentRepository()
     app.state.dimension_score_repository = DimensionScoreRepository()
     app.state.document_repository = DocumentRepository()
+    app.state.chunk_repository = ChunkRepository()
     app.state.signal_repository = SignalRepository()
     app.state.scoring_repository = ScoringRepository()
     app.state.composite_scoring_repository = CompositeScoringRepository()
@@ -54,7 +56,7 @@ def _create_singletons(app: FastAPI) -> None:
     app.state.vector_store = VectorStore()
     app.state.dimension_mapper = DimensionMapper()
     app.state.model_router = ModelRouter()
-    app.state.cs2_client = CS2Client()
+    app.state.cs2_client = CS2Client(company_repo=app.state.company_repository)
 
     # ── 3. HybridRetriever ───────────────────────────────────────────────
     from app.services.retrieval.hybrid import HybridRetriever
@@ -85,7 +87,7 @@ def _create_singletons(app: FastAPI) -> None:
         retriever=app.state.hybrid_retriever,
     )
 
-    # ── 5. Domain services (no-arg; resolve internal deps via factories) ─
+    # ── 5. Domain services (pass already-created repos from app.state) ──
     from app.services.composite_scoring_service import CompositeScoringService
     from app.services.document_collector import DocumentCollectorService
     from app.services.document_parsing_service import DocumentParsingService
@@ -99,16 +101,47 @@ def _create_singletons(app: FastAPI) -> None:
     from app.services.culture_signal_service import CultureSignalService
 
     app.state.composite_scoring_service = CompositeScoringService()
-    app.state.document_collector_service = DocumentCollectorService()
-    app.state.document_parsing_service = DocumentParsingService()
-    app.state.document_chunking_service = DocumentChunkingService()
-    app.state.scoring_service = ScoringService()
-    app.state.job_signal_service = JobSignalService()
-    app.state.patent_signal_service = PatentSignalService()
-    app.state.tech_signal_service = TechSignalService()
-    app.state.leadership_service = LeadershipSignalService()
-    app.state.board_composition_service = BoardCompositionService()
-    app.state.culture_signal_service = CultureSignalService()
+    app.state.document_collector_service = DocumentCollectorService(
+        company_repo=app.state.company_repository,
+        document_repo=app.state.document_repository,
+    )
+    app.state.document_parsing_service = DocumentParsingService(
+        document_repo=app.state.document_repository,
+    )
+    app.state.document_chunking_service = DocumentChunkingService(
+        document_repo=app.state.document_repository,
+        chunk_repo=app.state.chunk_repository,
+    )
+    app.state.scoring_service = ScoringService(
+        company_repo=app.state.company_repository,
+        scoring_repo=app.state.scoring_repository,
+        signal_repo=app.state.signal_repository,
+        document_repo=app.state.document_repository,
+        chunk_repo=app.state.chunk_repository,
+    )
+    app.state.job_signal_service = JobSignalService(
+        company_repo=app.state.company_repository,
+        signal_repo=app.state.signal_repository,
+    )
+    app.state.patent_signal_service = PatentSignalService(
+        company_repo=app.state.company_repository,
+        signal_repo=app.state.signal_repository,
+    )
+    app.state.tech_signal_service = TechSignalService(
+        company_repo=app.state.company_repository,
+        signal_repo=app.state.signal_repository,
+    )
+    app.state.leadership_service = LeadershipSignalService(
+        company_repo=app.state.company_repository,
+        signal_repo=app.state.signal_repository,
+        document_repo=app.state.document_repository,
+    )
+    app.state.board_composition_service = BoardCompositionService(
+        company_repo=app.state.company_repository,
+    )
+    app.state.culture_signal_service = CultureSignalService(
+        company_repo=app.state.company_repository,
+    )
 
     # ── 6. Task Store (Redis-backed) ────────────────────────────────────
     from app.services.task_store import TaskStore
@@ -119,7 +152,7 @@ def _create_singletons(app: FastAPI) -> None:
         app.state.task_store = TaskStore(redis_client=cache.client)
     else:
         import redis as _redis
-        from app.config import settings
+        from app.core.settings import settings
         _client = _redis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=5)
         app.state.task_store = TaskStore(redis_client=_client)
 

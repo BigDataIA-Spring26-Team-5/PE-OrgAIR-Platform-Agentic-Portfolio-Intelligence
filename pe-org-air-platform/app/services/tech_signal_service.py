@@ -16,7 +16,7 @@ FIXES:
     → removed subdomains from call, collector handles its own domain scanning
 """
 import asyncio
-import logging
+import structlog
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -24,11 +24,11 @@ from app.pipelines.tech_signals import TechStackCollector, TechStackResult
 from app.services.base_signal_service import BaseSignalService
 from app.services.s3_storage import get_s3_service
 from app.repositories.company_repository import CompanyRepository
-from app.repositories.signal_repository import get_signal_repository
+from app.repositories.signal_repository import SignalRepository
 from app.services.utils import make_singleton_factory
 from app.services.llm.router import get_llm_router
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class TechSignalService(BaseSignalService):
@@ -37,11 +37,11 @@ class TechSignalService(BaseSignalService):
     signal_category = "digital_presence"
     summary_field = "digital_score"
 
-    def __init__(self):
+    def __init__(self, company_repo=None, signal_repo=None):
         self.collector = TechStackCollector()
         self.s3 = get_s3_service()
-        self.company_repo = CompanyRepository()
-        self.signal_repo = get_signal_repository()
+        self.company_repo = company_repo or CompanyRepository()
+        self.signal_repo = signal_repo or SignalRepository()
         self.llm_router = get_llm_router()
 
     async def _suggest_subdomains_async(

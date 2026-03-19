@@ -32,9 +32,10 @@ from app.core.dependencies import (
     get_dimension_mapper as _get_mapper,
     get_cs2_client as _get_cs2,
     get_ic_prep_workflow as _get_ic_prep,
+    get_scoring_repository as _get_scoring_repo,
+    get_signal_repository as _get_signal_repo,
 )
-from app.core.exceptions import raise_error
-from app.core.errors import ValidationError as PlatformValidationError
+from app.core.errors import ValidationError as PlatformValidationError, ExternalServiceError
 from app.config.retrieval_settings import RETRIEVAL_SETTINGS
 
 logger = structlog.get_logger()
@@ -733,7 +734,7 @@ async def justify_score(
         j = await asyncio.to_thread(gen.generate_justification, ticker, dimension)
     except Exception as e:
         logger.error("rag.justify_error", ticker=ticker, dimension=dimension, error=str(e))
-        raise_error(500, "RAG_ERROR", "An internal error occurred during RAG processing.")
+        raise ExternalServiceError("rag", "An internal error occurred during RAG processing.")
 
     return JustifyResponse(
         ticker=j.company_id,
@@ -772,7 +773,7 @@ async def ic_prep(
         pkg = await workflow.prepare_meeting(ticker, focus_dimensions=focus)
     except Exception as e:
         logger.error("rag.ic_prep_error", ticker=ticker, error=str(e))
-        raise_error(500, "RAG_ERROR", "An internal error occurred during RAG processing.")
+        raise ExternalServiceError("rag", "An internal error occurred during RAG processing.")
 
     dim_scores = {dim: j.score for dim, j in pkg.dimension_justifications.items()}
     return ICPrepResponse(
@@ -835,6 +836,8 @@ async def chatbot_query(
     retriever: HybridRetriever = Depends(_get_retriever),
     vs: VectorStore = Depends(_get_vector_store),
     llm_router: ModelRouter = Depends(_get_router),
+    scoring_repo=Depends(_get_scoring_repo),
+    signal_repo=Depends(_get_signal_repo),
 ):
     """
     Answer a question about a company using RAG.
@@ -935,8 +938,6 @@ async def chatbot_query(
     score_context = ""
     try:
         # Dimension scores from evidence_dimension_scores table
-        from app.repositories.scoring_repository import get_scoring_repository
-        scoring_repo = get_scoring_repository()
         dim_rows = scoring_repo.get_dimension_scores(ticker)
         if dim_rows:
             score_lines = [
@@ -950,9 +951,7 @@ async def chatbot_query(
 
     try:
         # Signal summary from company_signal_summaries table
-        from app.repositories.signal_repository import get_signal_repository
-        sig_repo = get_signal_repository()
-        summary = sig_repo.get_summary_by_ticker(ticker)
+        summary = signal_repo.get_summary_by_ticker(ticker)
         if summary:
             sig_lines = []
             for k, v in summary.items():

@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 
 from app.services.redis_cache import RedisCache
-from app.config import settings
+from app.core.settings import settings
 
 # TTL constants from requirements (in seconds)
 TTL_COMPANY = 300              # 5 minutes

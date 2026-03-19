@@ -46,6 +46,14 @@ def get_composite_scoring_repository(request: Request):
     return request.app.state.composite_scoring_repository
 
 
+def get_health_repository(request: Request):
+    return request.app.state.health_repository
+
+
+def get_chunk_repository(request: Request):
+    return request.app.state.chunk_repository
+
+
 # ── Service providers ────────────────────────────────────────────────────────
 
 def get_vector_store(request: Request):

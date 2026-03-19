@@ -11,7 +11,7 @@ FIX: analyze_job_market() now returns total_tech_jobs, confidence,
 """
 from __future__ import annotations
 
-import logging
+import structlog
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -27,15 +27,15 @@ from app.pipelines.signal_pipeline_state import SignalPipelineState
 from app.services.s3_storage import get_s3_service
 from app.repositories.company_repository import CompanyRepository
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class JobDataService:
     """Service to collect and cache raw job data for JobSignalService."""
 
-    def __init__(self):
+    def __init__(self, company_repo=None):
         self.s3_service = get_s3_service()
-        self.company_repo = CompanyRepository()
+        self.company_repo = company_repo or CompanyRepository()
         self._cache: Dict[str, Dict] = {}
         self._cache_ttl = timedelta(hours=1)
 

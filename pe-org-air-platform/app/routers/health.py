@@ -8,15 +8,17 @@ app/routers/health.py
 
 from __future__ import annotations
 
-import logging
-from fastapi import APIRouter, status
+import structlog
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Dict
 from datetime import datetime, timezone
 import os
 
-logger = logging.getLogger(__name__)
+from app.core.dependencies import get_health_repository
+
+logger = structlog.get_logger()
 
 router = APIRouter(tags=["Health"])
 
@@ -36,11 +38,13 @@ class HealthResponse(BaseModel):
 # Dependency Health Checks
 # -------------------------
 
-async def check_snowflake() -> str:
+async def check_snowflake(health_repo=None) -> str:
     """Check Snowflake connection health."""
     try:
-        from app.repositories.health_repository import get_health_repo
-        user, role = get_health_repo().ping()
+        if health_repo is None:
+            from app.repositories.health_repository import HealthRepository
+            health_repo = HealthRepository()
+        user, role = health_repo.ping()
         return f"healthy (User: {user}, Role: {role})"
     except Exception as e:
         msg = str(e)
@@ -115,9 +119,9 @@ def healthz():
     summary="Deep health check",
     description="Checks Snowflake, Redis, and S3 connectivity.",
 )
-async def health_check():
+async def health_check(health_repo=Depends(get_health_repository)):
     dependencies = {
-        "snowflake": await check_snowflake(),
+        "snowflake": await check_snowflake(health_repo),
         "redis": await check_redis(),
         "s3": await check_s3(),
     }

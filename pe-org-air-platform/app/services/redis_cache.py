@@ -1,7 +1,7 @@
 import redis
 from typing import Optional, TypeVar, Type
 from pydantic import BaseModel
-from app.config import settings
+from app.core.settings import settings
 from functools import lru_cache
 
 T = TypeVar("T", bound=BaseModel)

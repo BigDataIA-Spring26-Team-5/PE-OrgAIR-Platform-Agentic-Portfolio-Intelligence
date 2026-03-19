@@ -12,7 +12,7 @@ existing import in app/routers/rag.py:972 continues to work.
 
 import asyncio
 import json
-import logging
+import structlog
 from typing import Optional, Tuple
 
 from app.core.errors import NotFoundError
@@ -22,13 +22,13 @@ from app.pipelines.glassdoor_collector import (
 )
 from app.repositories.company_repository import CompanyRepository
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class CultureSignalService:
-    def __init__(self):
+    def __init__(self, company_repo=None):
         self._collector = CultureCollector()
-        self._company_repo = CompanyRepository()
+        self._company_repo = company_repo or CompanyRepository()
 
     async def analyze_company(self, ticker: str, force_refresh: bool = False, **kwargs) -> dict:
         ticker = ticker.upper()

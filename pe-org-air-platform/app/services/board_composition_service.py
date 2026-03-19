@@ -7,7 +7,7 @@ Exposes async analyze_company() matching the pattern of other signal services.
 """
 
 import asyncio
-import logging
+import structlog
 from typing import Optional
 
 from app.core.errors import NotFoundError
@@ -18,13 +18,13 @@ from app.pipelines.board_analyzer import (
 )
 from app.repositories.company_repository import CompanyRepository
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class BoardCompositionService:
-    def __init__(self):
+    def __init__(self, company_repo=None):
         self._analyzer = BoardCompositionAnalyzer()
-        self._company_repo = CompanyRepository()
+        self._company_repo = company_repo or CompanyRepository()
 
     async def analyze_company(self, ticker: str, **kwargs) -> dict:
         ticker = ticker.upper()

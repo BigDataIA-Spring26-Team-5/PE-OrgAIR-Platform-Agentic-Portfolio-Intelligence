@@ -53,8 +53,8 @@ class JustificationGenerator:
         router: Optional[ModelRouter] = None,
     ):
         if scoring_repo is None:
-            from app.repositories.scoring_repository import get_scoring_repository
-            scoring_repo = get_scoring_repository()
+            from app.repositories.scoring_repository import ScoringRepository
+            scoring_repo = ScoringRepository()
         self.scoring_repo = scoring_repo
         self.retriever = retriever or HybridRetriever()
         self.router = router or ModelRouter()

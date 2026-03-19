@@ -14,15 +14,14 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-import logging
+import structlog
 import time
 
 from app.core.dependencies import get_scoring_service, get_scoring_repository
-from app.core.exceptions import raise_error
-from app.core.errors import NotFoundError, PlatformError, PipelineIncompleteError, ScoringInProgressError
+from app.core.errors import NotFoundError, PlatformError, PipelineIncompleteError, ScoringInProgressError, ExternalServiceError
 from app.utils.serialization import serialize_row
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1", tags=["CS3 Dimensions Scoring"])
 
@@ -123,8 +122,8 @@ async def score_all_companies(
             duration_seconds=round(time.time() - start, 2),
         )
     except Exception as e:
-        logger.error(f"Scoring all failed: {e}", exc_info=True)
-        raise_error(500, "SCORING_FAILED", "Failed to score all companies.")
+        logger.error("scoring_all_failed", error=str(e), exc_info=True)
+        raise ExternalServiceError("scoring", "Failed to score all companies.")
 
 
 # =====================================================================
@@ -255,5 +254,5 @@ async def get_dimension_scores(
     except Exception as e:
         if hasattr(e, 'status_code'):
             raise
-        logger.error(f"Failed to get dimensions for {ticker}: {e}")
-        raise_error(500, "FETCH_FAILED", "Failed to retrieve dimension scores.")
+        logger.error("get_dimensions_failed", ticker=ticker, error=str(e))
+        raise PlatformError("Failed to retrieve dimension scores.", "FETCH_FAILED")

@@ -5,7 +5,7 @@ app/services/patent_signal_service.py
 ALIGNED WITH CASE STUDY 2 PDF SPEC (pages 17-19).
 Confidence is fixed 0.90 per PDF. Scoring done in patent_signals.py.
 """
-import logging
+import structlog
 from typing import Dict
 from datetime import datetime, timezone
 
@@ -14,10 +14,10 @@ from app.pipelines.signal_pipeline_state import SignalPipelineState as Pipeline2
 from app.services.base_signal_service import BaseSignalService
 from app.services.s3_storage import get_s3_service
 from app.repositories.company_repository import CompanyRepository
-from app.repositories.signal_repository import get_signal_repository
+from app.repositories.signal_repository import SignalRepository
 from app.services.utils import make_singleton_factory
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class PatentSignalService(BaseSignalService):
@@ -26,10 +26,10 @@ class PatentSignalService(BaseSignalService):
     signal_category = "innovation_activity"
     summary_field = "innovation_score"
 
-    def __init__(self):
+    def __init__(self, company_repo=None, signal_repo=None):
         self.s3_service = get_s3_service()
-        self.company_repo = CompanyRepository()
-        self.signal_repo = get_signal_repository()
+        self.company_repo = company_repo or CompanyRepository()
+        self.signal_repo = signal_repo or SignalRepository()
 
     async def _collect(self, ticker: str, company_id: str, company: dict, years_back: int = 5) -> dict:
         company_name = company["name"]

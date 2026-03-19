@@ -224,7 +224,7 @@ class CS2Evidence:
 class CS2Client(BaseAPIClient):
     """Fetches evidence directly from S3, mirroring vr_scoring_service._load_jobs_from_s3()."""
 
-    def __init__(self):
+    def __init__(self, company_repo=None):
         super().__init__(
             base_url=GROQ_BASE_URL,
             service_name="groq",
@@ -233,6 +233,7 @@ class CS2Client(BaseAPIClient):
         )
         from app.services.s3_storage import get_s3_service
         self._s3 = get_s3_service()
+        self._company_repo = company_repo
 
     async def _expand_keywords_with_groq(self, ticker: str, category: str) -> List[str]:
         """Use Groq LLM to expand keywords for a given signal category and company."""
@@ -484,10 +485,10 @@ class CS2Client(BaseAPIClient):
         Stored in S3 as a raw JSON list (NOT wrapped in {"chunks": [...]}).
         """
         try:
-            from app.repositories.chunk_repository import get_chunk_repository
-            chunk_repo = get_chunk_repository()
+            from app.repositories.chunk_repository import ChunkRepository
+            chunk_repo = ChunkRepository()
         except Exception as e:
-            logger.warning("sec_chunk_repo_unavailable ticker=%s error=%s", ticker, e)
+            logger.warning("sec_chunk_repo_unavailable", ticker=ticker, error=str(e))
             return []
 
         results: List[CS2Evidence] = []
@@ -622,9 +623,10 @@ class CS2Client(BaseAPIClient):
         if not company_id:
             return None
         try:
-            from app.repositories.company_repository import CompanyRepository
-            repo = CompanyRepository()
-            company = repo.get_by_id(company_id)
+            if self._company_repo is None:
+                from app.repositories.company_repository import CompanyRepository
+                self._company_repo = CompanyRepository()
+            company = self._company_repo.get_by_id(company_id)
             if company:
                 return company.get("ticker") or company.get("symbol")
         except Exception:

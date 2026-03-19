@@ -114,3 +114,10 @@ def get_ic_prep_workflow(request: Request):
 
 def get_task_store(request: Request):
     return request.app.state.task_store
+
+
+from app.middleware.correlation import get_correlation_id
+
+
+def get_correlation_id_dep(request: Request) -> str:
+    return getattr(request.state, "correlation_id", get_correlation_id())

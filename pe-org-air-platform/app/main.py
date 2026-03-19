@@ -28,6 +28,7 @@ from app.routers.analyst_notes import router as analyst_notes_router
 from app.core.exceptions import validation_exception_handler
 from app.core.errors import PlatformError, ERROR_STATUS_MAP
 from app.core.lifespan import lifespan
+from app.middleware.correlation import CorrelationIdMiddleware, get_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(CorrelationIdMiddleware)
 
 # REGISTER EXCEPTION HANDLERS
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
@@ -155,6 +157,7 @@ async def platform_error_handler(request: Request, exc: PlatformError):
             "message": exc.message,
             "details": exc.details,
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "correlation_id": get_correlation_id(),
         },
     )
 
@@ -170,6 +173,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             "message": "An unexpected error occurred.",
             "details": None,
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "correlation_id": get_correlation_id(),
         },
     )
 

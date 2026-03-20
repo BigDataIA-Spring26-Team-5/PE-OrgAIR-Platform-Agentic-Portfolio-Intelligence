@@ -93,12 +93,12 @@ def _create_singletons(app: FastAPI) -> None:
     from app.services.document_parsing_service import DocumentParsingService
     from app.services.document_chunking_service import DocumentChunkingService
     from app.services.scoring_service import ScoringService
-    from app.services.job_signal_service import JobSignalService
-    from app.services.patent_signal_service import PatentSignalService
-    from app.services.tech_signal_service import TechSignalService
-    from app.services.leadership_service import LeadershipSignalService
-    from app.services.board_composition_service import BoardCompositionService
-    from app.services.culture_signal_service import CultureSignalService
+    from app.services.signals.job_signal_service import JobSignalService
+    from app.services.signals.patent_signal_service import PatentSignalService
+    from app.services.signals.tech_signal_service import TechSignalService
+    from app.services.signals.leadership_service import LeadershipSignalService
+    from app.services.signals.board_composition_service import BoardCompositionService
+    from app.services.signals.culture_signal_service import CultureSignalService
 
     app.state.composite_scoring_service = CompositeScoringService()
     app.state.document_collector_service = DocumentCollectorService(
@@ -143,7 +143,7 @@ def _create_singletons(app: FastAPI) -> None:
         company_repo=app.state.company_repository,
     )
 
-    # ── 6. Task Store (Redis-backed) ────────────────────────────────────
+    # ── 6. Task Store (Redis-backed, in-memory fallback) ─────────────────
     from app.services.task_store import TaskStore
     from app.services.cache import get_cache
 
@@ -151,10 +151,7 @@ def _create_singletons(app: FastAPI) -> None:
     if cache:
         app.state.task_store = TaskStore(redis_client=cache.client)
     else:
-        import redis as _redis
-        from app.core.settings import settings
-        _client = _redis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=5)
-        app.state.task_store = TaskStore(redis_client=_client)
+        app.state.task_store = TaskStore(redis_client=None)
 
 
 

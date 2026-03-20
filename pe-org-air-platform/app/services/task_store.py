@@ -1,9 +1,9 @@
 """
-Redis-backed Task Store — PE Org-AI-R Platform
+Task Store — PE Org-AI-R Platform
 app/services/task_store.py
 
-Stores background task state in Redis so it persists across server restarts.
-Synchronous methods (matches existing RedisCache pattern).
+Stores background task state. Uses Redis when available, falls back to
+in-memory dict when Redis is unavailable (tasks won't survive restarts).
 """
 
 import json
@@ -17,10 +17,13 @@ TASK_TTL = 86400  # 24 hours
 
 
 class TaskStore:
-    """Redis-backed store for background task state."""
+    """Task store with Redis backend and in-memory fallback."""
 
-    def __init__(self, redis_client):
+    def __init__(self, redis_client=None):
         self.client = redis_client
+        self._memory: Dict[str, dict] = {}
+        if redis_client is None:
+            logger.warning("TaskStore: Redis unavailable, using in-memory fallback")
 
     def _key(self, task_id: str) -> str:
         return f"task:{task_id}"
@@ -38,23 +41,37 @@ class TaskStore:
         }
         if metadata:
             task.update({k: v for k, v in metadata.items() if k not in task})
-        self.client.setex(self._key(task_id), TASK_TTL, json.dumps(task))
+        if self.client:
+            try:
+                self.client.setex(self._key(task_id), TASK_TTL, json.dumps(task))
+            except Exception:
+                self._memory[task_id] = task
+        else:
+            self._memory[task_id] = task
         return task
 
-    # NOTE: TaskStore is intentionally synchronous — the Redis client in app/services/cache.py
-    # is redis.Redis (not aioredis). Audit check #16 flagged async; this is by design.
     def update_status(self, task_id: str, **updates) -> Optional[dict]:
         """Update an existing task. Returns updated dict or None if not found."""
         task = self.get_task(task_id)
         if task is None:
             return None
         task.update(updates)
-        self.client.setex(self._key(task_id), TASK_TTL, json.dumps(task))
+        if self.client:
+            try:
+                self.client.setex(self._key(task_id), TASK_TTL, json.dumps(task))
+            except Exception:
+                self._memory[task_id] = task
+        else:
+            self._memory[task_id] = task
         return task
 
     def get_task(self, task_id: str) -> Optional[dict]:
-        """Retrieve task state from Redis. Returns None if expired or missing."""
-        data = self.client.get(self._key(task_id))
-        if data is None:
-            return None
-        return json.loads(data)
+        """Retrieve task state. Returns None if expired or missing."""
+        if self.client:
+            try:
+                data = self.client.get(self._key(task_id))
+                if data is not None:
+                    return json.loads(data)
+            except Exception:
+                pass
+        return self._memory.get(task_id)

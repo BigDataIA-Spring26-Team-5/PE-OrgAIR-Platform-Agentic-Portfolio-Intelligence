@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
@@ -17,10 +16,12 @@ from app.prompts.rag_prompts import CS2_KEYWORD_EXPANSION_USER, CS2_SIGNAL_SUMMA
 
 logger = logging.getLogger(__name__)
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+from app.core.settings import settings as _settings
+
+GROQ_API_KEY = _settings.GROQ_API_KEY.get_secret_value() if _settings.GROQ_API_KEY else ""
 GROQ_MODEL = "llama-3.1-8b-instant"
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-GROQ_API_URL = f"{GROQ_BASE_URL}/chat/completions"  # kept for backward compat
+GROQ_API_URL = _settings.GROQ_API_URL
+GROQ_BASE_URL = _settings.GROQ_API_URL.rsplit("/chat/completions", 1)[0]
 
 SIGNAL_KEYWORDS: Dict[str, List[str]] = {
     "technology_hiring": [

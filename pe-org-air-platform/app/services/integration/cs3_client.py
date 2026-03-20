@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from enum import Enum
 
 import httpx
@@ -19,9 +18,11 @@ from app.prompts.rag_prompts import (
 
 logger = logging.getLogger(__name__)
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+from app.core.settings import settings as _settings
+
+GROQ_API_KEY = _settings.GROQ_API_KEY.get_secret_value() if _settings.GROQ_API_KEY else ""
 GROQ_MODEL = "llama-3.1-8b-instant"
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_API_URL = _settings.GROQ_API_URL
 
 # Short dimension names used in CS3 RAG context (matches stored rubric keys)
 DIMENSIONS = [

@@ -11,11 +11,8 @@ import structlog
 from typing import Optional
 
 from app.core.errors import NotFoundError
-from app.pipelines.board_analyzer import (
-    BoardCompositionAnalyzer,
-    CompanyRegistry,
-    save_signal_to_s3,
-)
+from app.pipelines.board_analyzer import BoardCompositionAnalyzer, save_signal_to_s3
+from app.config.company_mappings import CompanyRegistry
 from app.repositories.company_repository import CompanyRepository
 
 logger = structlog.get_logger()

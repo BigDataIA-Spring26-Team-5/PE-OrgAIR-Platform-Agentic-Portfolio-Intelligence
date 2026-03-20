@@ -200,14 +200,12 @@ def _groq_discover_subdomains(ticker: str, company_name: str, primary_domain: st
       - Deduplicate after stripping
       - Only keep strings that look like valid domains (contain ".", < 100 chars)
     """
-    import os
-
-    groq_api_key = os.getenv("GROQ_API_KEY", "")
+    groq_api_key = settings.GROQ_API_KEY.get_secret_value() if settings.GROQ_API_KEY else ""
     if not groq_api_key:
         logger.warning("GROQ_API_KEY not set — cannot discover subdomains")
         return []
 
-    prompt = f"""The primary website "{primary_domain}" for company "{company_name}" (ticker: {ticker}) 
+    prompt = f"""The primary website "{primary_domain}" for company "{company_name}" (ticker: {ticker})
 blocks web technology fingerprinting tools like BuiltWith and Wappalyzer.
 
 List the real technical subdomains or sister domains for this company that:
@@ -245,7 +243,7 @@ Rules:
 
         import requests as _req
         resp = _req.post(
-            "https://api.groq.com/openai/v1/chat/completions",
+            settings.GROQ_API_URL,
             headers=headers, json=payload, timeout=20.0,
         )
         resp.raise_for_status()
@@ -479,9 +477,7 @@ def _groq_tech_stack_score(ticker: str, company_name: str, domain: str) -> Optio
     Only called when score < LLM_SCORE_FALLBACK_THRESHOLD (10.0).
     Tagged as llm_fallback_used=True. Confidence hard-capped at 0.30.
     """
-    import os
-
-    groq_api_key = os.getenv("GROQ_API_KEY", "")
+    groq_api_key = settings.GROQ_API_KEY.get_secret_value() if settings.GROQ_API_KEY else ""
     if not groq_api_key:
         logger.warning("GROQ_API_KEY not set — cannot run LLM fallback for tech stack")
         return None
@@ -529,7 +525,7 @@ Scoring guidance:
         }
 
         response = httpx.post(
-            "https://api.groq.com/openai/v1/chat/completions",
+            settings.GROQ_API_URL,
             headers=headers,
             json=payload,
             timeout=30.0,

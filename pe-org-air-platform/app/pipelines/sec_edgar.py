@@ -1,5 +1,4 @@
 #app/pipelines/sec_edgar.py
-import os
 import time
 import structlog
 import requests

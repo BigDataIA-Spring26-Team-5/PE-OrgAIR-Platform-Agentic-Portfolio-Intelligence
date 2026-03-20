@@ -88,6 +88,14 @@ class Settings(BaseSettings):
     DEFAULT_LLM_MODEL: str = "gpt-4o-2024-08-06"
     FALLBACK_LLM_MODEL: str = "claude-sonnet-4-20250514"
 
+    # Groq
+    GROQ_API_KEY: Optional[SecretStr] = None
+    GROQ_API_URL: str = "https://api.groq.com/openai/v1/chat/completions"
+
+    # JSearch (RapidAPI) — real-time job posting fallback
+    JSEARCH_API_KEY: Optional[SecretStr] = None
+    JSEARCH_HOST: str = "jsearch.p.rapidapi.com"
+
     # Cost Management
     DAILY_COST_BUDGET_USD: float = Field(default=500.0, ge=0)
     COST_ALERT_THRESHOLD_PCT: float = Field(default=0.8, ge=0, le=1)

@@ -304,3 +304,33 @@ def get_patent_search_name(ticker: str) -> Optional[str]:
     """Get the PRIMARY patent search name for PatentsView API."""
     names = get_patent_search_names(ticker)
     return names[0] if names else None
+
+
+# =============================================================================
+# COMPANY REGISTRY — CIK lookups for SEC EDGAR board proxy analysis
+# =============================================================================
+
+class CompanyRegistry:
+    """Maps CS3 portfolio tickers to SEC CIK numbers for DEF 14A retrieval."""
+    COMPANIES: Dict[str, Dict] = {
+        "NVDA": {"cik": "0001045810", "name": "NVIDIA Corporation",          "sector": "technology"},
+        "JPM":  {"cik": "0000019617", "name": "JPMorgan Chase & Co.",        "sector": "financial_services"},
+        "WMT":  {"cik": "0000104169", "name": "Walmart Inc.",                "sector": "retail"},
+        "GE":   {"cik": "0000040545", "name": "GE Aerospace",                "sector": "manufacturing"},
+        "DG":   {"cik": "0000029534", "name": "Dollar General Corporation",  "sector": "retail"},
+    }
+
+    @classmethod
+    def get(cls, ticker: str) -> Dict:
+        t = ticker.upper()
+        if t in cls.COMPANIES:
+            return cls.COMPANIES[t]
+        raise ValueError(f"Unknown ticker '{ticker}'.")
+
+    @classmethod
+    def register(cls, ticker: str, cik: str, name: str, sector: str = "unknown"):
+        cls.COMPANIES[ticker.upper()] = {"cik": cik, "name": name, "sector": sector}
+
+    @classmethod
+    def all_tickers(cls) -> List[str]:
+        return list(cls.COMPANIES.keys())

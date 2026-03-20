@@ -20,12 +20,9 @@ from app.core.dependencies import (
     get_signal_repository,
 )
 from app.routers.common import get_company_or_404
-from app.services.evidence_service import build_document_summary
-from app.models.evidence import (
-    DocumentSummary,
-    CompanyEvidenceResponse,
-    SignalEvidence,
-)
+from app.services.signals.evidence_service import build_document_summary
+from app.models.evidence import DocumentSummary, SignalEvidence
+from app.schemas.evidence import CompanyEvidenceResponse
 from app.models.signal import CompanySignalSummary
 
 logger = logging.getLogger(__name__)

@@ -580,8 +580,8 @@ async def index_company_evidence(
     if evidence:
         cs2.mark_indexed([e.evidence_id for e in evidence])
 
-    retriever.refresh_sparse_index()
     retriever.seed_from_evidence(evidence)
+    retriever.refresh_sparse_index()
 
     logger.info("rag.index_complete", ticker=ticker, indexed_count=count)
     return IndexResponse(indexed_count=count, ticker=ticker, source_counts=dict(source_counts))
@@ -635,9 +635,9 @@ async def bulk_index_evidence(
             failed[ticker] = str(e)
             logger.warning("rag.bulk_index_ticker_error", ticker=ticker, error=str(e))
 
-    retriever.refresh_sparse_index()
     if all_evidence:
         retriever.seed_from_evidence(all_evidence)
+    retriever.refresh_sparse_index()
 
     total_indexed = sum(r.indexed_count for r in results.values())
     return BulkIndexResponse(results=results, total_indexed=total_indexed, failed=failed)
@@ -968,7 +968,7 @@ async def chatbot_query(
 
     try:
         # Culture from S3
-        from app.services.culture_signal_service import get_culture_signal_service
+        from app.services.signals.culture_signal_service import get_culture_signal_service
         cult_svc = get_culture_signal_service()
         cult_data, _ = cult_svc.get(ticker)
         if cult_data and cult_data.get("overall_score"):

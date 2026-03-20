@@ -14,7 +14,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Dict
 from datetime import datetime, timezone
-import os
 
 from app.core.dependencies import get_health_repository
 
@@ -53,25 +52,16 @@ async def check_snowflake(health_repo=None) -> str:
 
 
 async def check_redis() -> str:
-    """Check Redis connection health."""
+    """Check Redis connection health via cache singleton."""
     try:
-        import redis
+        from app.services.cache import get_cache
 
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-
-        client = redis.from_url(
-            redis_url,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-        )
-        client.ping()
-        client.close()
-
+        cache = get_cache()
+        if cache is None:
+            return "unhealthy: cache not available"
+        cache.client.ping()
         return "healthy"
 
-    except ImportError:
-        return "unhealthy: redis package not installed"
     except Exception as e:
         msg = str(e)
         msg = (msg[:160] + "...") if len(msg) > 160 else msg

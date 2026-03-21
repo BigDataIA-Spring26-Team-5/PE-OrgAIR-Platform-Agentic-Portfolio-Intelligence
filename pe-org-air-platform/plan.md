@@ -52,8 +52,8 @@
 | 8 | 7 | LangGraph State | 8 | DONE |
 | 9 | 8 | Specialist Agents | 12 | DONE |
 | 10 | 9 | Supervisor + HITL | 10 | DONE |
-| 11 | 5 | Evidence Display Component | 6 | TODO |
-| 12 | 6 | Portfolio Dashboard (cs5_app.py) | 10 | TODO |**TODO — START HERE**|
+| 11 | 5 | Evidence Display Component | 6 | **TODO — START HERE** |
+| 12 | 6 | Portfolio Dashboard (cs5_app.py) | 10 | TODO |
 | 13 | 10 | DD Workflow Exercise | 10 | TODO |
 
 **Done: 24 pts | Remaining: 76 pts**

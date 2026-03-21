@@ -13,11 +13,11 @@
 | 8 | 7 | LangGraph State | 8 | DONE |
 | 9 | 8 | Specialist Agents | 12 | DONE |
 | 10 | 9 | Supervisor + HITL | 10 | DONE |
-| 11 | 5 | Evidence Display Component | 6 | **TODO** |
-| 12 | 6 | Portfolio Dashboard (cs5_app.py) | 10 | **TODO** |
+| 11 | 5 | Evidence Display Component | 6 | DONE |
+| 12 | 6 | Portfolio Dashboard (cs5_app.py) | 10 | DONE |
 | 13 | 10 | DD Workflow Exercise | 10 | **TODO** |
 
-**Done: 74 pts | Remaining: 26 pts**
+**Done: 90 pts | Remaining: 10 pts**
 
 ---
 
@@ -240,22 +240,109 @@ poetry run python -m app.agents.test_supervisor   # Terminal 2
 
 ---
 
-## Remaining Work (26 pts)
+---
 
-### Phase 5 — Evidence Display (6 pts)
-**New file:** `streamlit/components/evidence_display.py`
-- `render_evidence_card(justification: dict)` — score badge (L1–L5 colored), evidence list, gaps
-- `render_company_evidence_panel(company_id, justifications: dict)` — st.tabs for 7 dimensions
-- `render_evidence_summary_table(justifications: dict)` — pandas DataFrame with gradient styling
+## Step 11 — Evidence Display Component (Phase 5, 6 pts)
 
-### Phase 6 — Portfolio Dashboard (10 pts)
-**New file:** `streamlit/cs5_app.py`
-- `nest_asyncio.apply()` at top
-- `@st.cache_data(ttl=300)` data loading from `PortfolioDataService`
-- Metrics row (Fund-AI-R, company count, leaders, laggards)
-- VR vs HR Plotly scatter (size=org_air, color=sector, threshold lines at 60)
-- Company table with org_air gradient
-- Evidence panel from Phase 5 triggered by company selection
+**Files:** `streamlit/components/evidence_display.py`, `streamlit/components/evidence_display_test.py`
+
+### Design decisions
+- **No app-layer imports** — runs in the Streamlit process, which cannot import from `app.services`. All data comes from FastAPI via `requests.get()` and is handled as plain dicts.
+- **`st.session_state` caching** — justifications are cached per `(ticker, dimension)` key so re-selecting a dimension doesn't re-call FastAPI.
+- **`supporting_evidence: []` is valid** — ChromaDB returns empty lists when no chunks are indexed for a dimension/ticker combination. The UI shows metrics (score, level, gaps) correctly even when evidence count is 0.
+
+### Functions
+
+**`fetch_justification(ticker, dimension)`**
+- Calls `GET /api/v1/rag/justify/{ticker}/{dimension}` (60 s timeout)
+- Caches result in `st.session_state[f"justification_{ticker}_{dimension}"]`
+- Returns `JustifyResponse` dict or `None` on error
+
+**`fetch_all_justifications(ticker)`**
+- Loops all 7 dimensions with `st.progress()` feedback
+- Returns `Dict[dimension_name → JustifyResponse dict]`
+
+**`fetch_evidence(ticker, dimension, limit)`**
+- Calls `GET /api/v1/rag/evidence/{ticker}?dimension=...&limit=...`
+- Returns list of `EvidenceItemResponse` dicts
+
+**`render_evidence_card(justification: dict)`**
+- Reads `level`, `score`, `evidence_strength`, `rubric_criteria`, `generated_summary`, `supporting_evidence`, `gaps_identified` directly from the FastAPI response dict
+- Level badge L1–L5 color-coded (`#ef4444` red → `#14b8a6` teal)
+- Evidence strength badge (strong/moderate/weak)
+- Rubric match shown via `st.info()`
+- AI-generated summary in collapsed `st.expander`
+- Up to 5 supporting evidence items each in their own expander with source URL
+- Gaps listed via `st.warning()`
+
+**`render_evidence_summary_table(justifications: dict)`**
+- Builds pandas DataFrame: Dimension, Score, Level, Level Name, Evidence strength, Items count, Gaps count
+- Level column color-coded with `.map()` / `.applymap()` fallback for older pandas
+
+**`render_company_evidence_panel(ticker)`**
+- Full interactive panel with:
+  - **"Generate All 7 Dimensions"** button — clears cache, fetches all 7, stores in `st.session_state`
+  - **Single-dimension selector + "Generate" button** — fetches one dimension on demand
+  - **"Clear Cache"** button — evicts all cached justifications for the ticker
+  - **Metrics row**: Dimensions generated, Avg Score, Avg Level, Total Gaps, Evidence Items (with tooltip showing strong/weak counts)
+  - **Summary table** via `render_evidence_summary_table`
+  - **Per-dimension tabs** via `st.tabs`, each rendering `render_evidence_card`
+
+### Test runner
+`streamlit/components/evidence_display_test.py` — standalone Streamlit app:
+```bash
+cd streamlit/components
+poetry run streamlit run evidence_display_test.py
+```
+
+---
+
+## Step 12 — Portfolio Dashboard (Phase 6, 10 pts)
+
+**File:** `streamlit/cs5_app.py`
+
+### Design decisions
+- **`st.navigation()` for page control** — Streamlit 1.55 auto-discovers all `.py` files in the same directory as pages. Calling `st.navigation()` explicitly with 3 CS5 pages suppresses that, preventing `app.py` and `cs4_app.py` from appearing in the nav.
+- **sys.path surgery at module top** — Streamlit adds the script directory (`streamlit/`) to `sys.path[0]` before user code runs, making `streamlit/app.py` importable as the `app` module and shadowing the real `app/` package. Fix: strip `streamlit/` from `sys.path` entirely, insert project root at `[0]`, append only `streamlit/components/` (which has no `app.py`) at the end.
+- **`env_file` absolute path in `app/config/__init__.py`** — Pydantic `BaseSettings` with `env_file=".env"` resolves relative to CWD. When Streamlit runs from `streamlit/`, it looks for `streamlit/.env` and finds nothing. Fixed by computing the absolute path from `__file__` at import time.
+- **`nest_asyncio.apply()`** — required for `asyncio.run()` inside the Streamlit event loop when the Agentic Workflow page calls `dd_graph.ainvoke()`.
+- **`@st.cache_data(ttl=300)`** — portfolio scores cached 5 minutes; "Refresh Data" button calls `st.cache_data.clear()`.
+
+### 3 Pages (via `st.navigation`)
+
+**Portfolio Overview (`page_portfolio`)**
+- Fetches `GET /api/v1/assessments/{ticker}` for all 5 companies via `_load_scores()`
+- Fund-level metrics row: Fund-AI-R (portfolio avg), Companies, Leaders (≥70), Laggards (<50), Avg V^R, Avg H^R
+- Plotly scatter: x=V^R, y=H^R, size=Org-AI-R, color=sector, text=ticker — dashed threshold lines at 60
+- Company table sorted by Org-AI-R with gradient coloring (green ≥80, yellow ≥60, red >0)
+
+**Evidence Analysis (`page_evidence`)**
+- Sidebar company selectbox preserving `st.session_state["selected_ticker"]`
+- Delegates entirely to `render_company_evidence_panel(selected)` from `evidence_display.py`
+
+**Agentic Workflow (`page_workflow`)**
+- Company selector + Assessment Type selector (screening / limited / full)
+- "Run Workflow" button triggers `_run_workflow(ticker, assessment_type)`
+- Live log stream (last 20 lines) shown in `st.code` while running
+- Imports `app.agents.supervisor.dd_graph` at click time (deferred to avoid module-load cost)
+- Calls `asyncio.run(dd_graph.ainvoke(initial_state, config))` with `nest_asyncio` applied
+- Results panel: Org-AI-R, V^R, H^R, HITL Status, Messages count, delta_air, risk-adjusted EBITDA, IC Narrative expander, Gap Analysis expander
+
+### Fixes applied alongside dashboard
+| File | Fix |
+|------|-----|
+| `app/config/__init__.py` | `env_file` changed from `".env"` to absolute path via `__file__` — Pydantic finds `.env` regardless of CWD |
+| `streamlit/.streamlit/secrets.toml` | Created empty file — LiteLLM auto-detects Streamlit and calls `st.secrets`; without this file Streamlit raises "No secrets found" before returning an empty dict |
+
+### Run
+```bash
+cd streamlit
+poetry run streamlit run cs5_app.py
+```
+
+---
+
+## Remaining Work (10 pts)
 
 ### Phase 10 — DD Workflow Exercise (10 pts)
 **New file:** `exercises/agentic_due_diligence.py`

@@ -56,7 +56,7 @@
 | 12 | 6 | Portfolio Dashboard (cs5_app.py) | 10 | TODO |
 | 13 | 10 | DD Workflow Exercise | 10 | TODO |
 
-**Done: 24 pts | Remaining: 76 pts**
+**Done: 74 pts | Remaining: 26 pts**
 
 ---
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 from app.services.integration.cs3_client import CS3Client, DIMENSIONS
 from app.services.composite_scoring_service import (
@@ -13,15 +13,15 @@ from app.services.composite_scoring_service import (
 
 logger = logging.getLogger(__name__)
 
-# Sector benchmarks: median Org-AI-R scores by sector (from industry research)
-SECTOR_BENCHMARKS: Dict[str, float] = {
-    "technology": 72.0,
-    "financial_services": 58.0,
-    "healthcare": 48.0,
-    "manufacturing": 42.0,
-    "retail": 45.0,
-    "business_services": 50.0,
-    "consumer": 38.0,
+# CS5-format: nested quartile benchmarks per sector
+SECTOR_BENCHMARKS: Dict[str, Dict[str, float]] = {
+    "technology": {"q1": 75.0, "q2": 65.0, "q3": 55.0, "q4": 45.0},
+    "financial_services": {"q1": 68.0, "q2": 58.0, "q3": 48.0, "q4": 38.0},
+    "healthcare": {"q1": 58.0, "q2": 48.0, "q3": 38.0, "q4": 28.0},
+    "manufacturing": {"q1": 52.0, "q2": 42.0, "q3": 32.0, "q4": 22.0},
+    "retail": {"q1": 55.0, "q2": 45.0, "q3": 35.0, "q4": 25.0},
+    "business_services": {"q1": 60.0, "q2": 50.0, "q3": 40.0, "q4": 30.0},
+    "consumer": {"q1": 48.0, "q2": 38.0, "q3": 28.0, "q4": 18.0},
 }
 
 
@@ -43,7 +43,7 @@ class CompanyMetric:
 
 @dataclass
 class FundMetrics:
-    """Fund-level aggregated metrics."""
+    """Fund-level aggregated metrics (legacy field names)."""
     fund_id: str
     fund_air_score: float
     ev_weighted_score: float
@@ -60,11 +60,94 @@ class FundMetrics:
         return asdict(self)
 
 
+@dataclass
+class CS5FundMetrics:
+    """CS5-spec Fund-level metrics with exact field names from pg 30-31."""
+    fund_id: str
+    fund_air: float
+    company_count: int
+    quartile_distribution: Dict[str, int] = field(default_factory=dict)
+    sector_hhi: float = 0.0
+    avg_delta_since_entry: float = 0.0
+    total_ev_mm: float = 0.0
+    ai_leaders_count: int = 0
+    ai_laggards_count: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 class FundAIRCalculator:
     """Calculates Fund-AI-R and portfolio analytics."""
 
-    def __init__(self, cs3_client: CS3Client):
+    def __init__(self, cs3_client: Optional[CS3Client] = None):
         self.cs3 = cs3_client
+
+    def calculate_fund_metrics(
+        self,
+        fund_id: str,
+        companies: List[Any],
+        enterprise_values: Optional[Dict[str, float]] = None,
+    ) -> CS5FundMetrics:
+        """CS5-spec method: calculate EV-weighted Fund-AI-R from pre-fetched company views.
+
+        Args:
+            fund_id: Fund identifier
+            companies: List of PortfolioCompanyView objects (must have .company_id, .org_air)
+            enterprise_values: dict mapping company_id -> EV in $M (defaults to 100.0 each)
+        """
+        if enterprise_values is None:
+            enterprise_values = {}
+
+        total_ev = sum(enterprise_values.get(c.company_id, 100.0) for c in companies)
+        if total_ev == 0:
+            total_ev = len(companies) * 100.0
+
+        weighted_sum = sum(
+            enterprise_values.get(c.company_id, 100.0) * c.org_air
+            for c in companies
+        )
+        fund_air = round(weighted_sum / total_ev, 2) if total_ev > 0 else 0.0
+
+        # Quartile distribution using nested SECTOR_BENCHMARKS
+        q_counts: Dict[str, int] = {"q1": 0, "q2": 0, "q3": 0, "q4": 0}
+        for c in companies:
+            sector = getattr(c, "sector", "technology")
+            benchmarks = SECTOR_BENCHMARKS.get(sector, SECTOR_BENCHMARKS["technology"])
+            score = c.org_air
+            if score >= benchmarks["q1"]:
+                q_counts["q1"] += 1
+            elif score >= benchmarks["q2"]:
+                q_counts["q2"] += 1
+            elif score >= benchmarks["q3"]:
+                q_counts["q3"] += 1
+            else:
+                q_counts["q4"] += 1
+
+        # HHI by sector
+        sector_counts: Counter = Counter(getattr(c, "sector", "unknown") for c in companies)
+        n = len(companies) or 1
+        hhi = round(sum((count / n) ** 2 for count in sector_counts.values()), 4)
+
+        leaders_count = sum(1 for c in companies if c.org_air >= 70)
+        laggards_count = sum(1 for c in companies if 0 < c.org_air < 50)
+
+        avg_delta = (
+            sum(getattr(c, "delta_since_entry", 0.0) for c in companies) / n
+            if companies else 0.0
+        )
+
+        return CS5FundMetrics(
+            fund_id=fund_id,
+            fund_air=fund_air,
+            company_count=len(companies),
+            quartile_distribution=q_counts,
+            sector_hhi=hhi,
+            avg_delta_since_entry=round(avg_delta, 2),
+            total_ev_mm=round(total_ev, 2),
+            ai_leaders_count=leaders_count,
+            ai_laggards_count=laggards_count,
+        )
 
     def calculate(
         self,
@@ -76,6 +159,8 @@ class FundAIRCalculator:
 
         Fund-AI-R = sum(ev_weight_i * org_air_i) for all companies i
         """
+        if self.cs3 is None:
+            raise RuntimeError("calculate() requires cs3_client; use calculate_fund_metrics() instead.")
         tickers = tickers or list(CS3_PORTFOLIO)
         company_metrics: List[CompanyMetric] = []
 
@@ -137,14 +222,17 @@ class FundAIRCalculator:
 
     @staticmethod
     def _sector_quartile(score: float, sector: str) -> int:
-        """Determine sector quartile based on benchmark."""
-        benchmark = SECTOR_BENCHMARKS.get(sector, 50.0)
-        diff = score - benchmark
-        if diff >= 15:
+        """Determine sector quartile based on nested benchmark dict."""
+        benchmarks = SECTOR_BENCHMARKS.get(sector, SECTOR_BENCHMARKS["technology"])
+        if score >= benchmarks["q1"]:
             return 1  # Top quartile
-        elif diff >= 0:
+        elif score >= benchmarks["q2"]:
             return 2
-        elif diff >= -15:
+        elif score >= benchmarks["q3"]:
             return 3
         else:
             return 4  # Bottom quartile
+
+
+# Module-level singleton (CS5 requires no-arg constructor)
+fund_air_calculator = FundAIRCalculator()

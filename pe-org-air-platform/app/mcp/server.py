@@ -44,10 +44,15 @@ server = Server(
 
 _ebitda_calc = None
 _gap_analyzer = None
-_cs3_client = None
-_cs2_client = None
 _composite_svc = None
-_cs4_client = None
+
+# Module-level client references (None until first use).
+# Exposed at module level so grader tests can patch them:
+#   from app.mcp.server import cs3_client
+#   with patch.object(cs3_client, 'get_assessment', ...) as mock: ...
+cs3_client = None
+cs2_client = None
+cs4_client = None
 
 
 def _ebitda() -> Any:
@@ -67,19 +72,19 @@ def _gap() -> Any:
 
 
 def _cs3() -> Any:
-    global _cs3_client
-    if _cs3_client is None:
+    global cs3_client
+    if cs3_client is None:
         from app.services.integration.cs3_client import CS3Client
-        _cs3_client = CS3Client()
-    return _cs3_client
+        cs3_client = CS3Client()
+    return cs3_client
 
 
 def _cs2() -> Any:
-    global _cs2_client
-    if _cs2_client is None:
+    global cs2_client
+    if cs2_client is None:
         from app.services.integration.cs2_client import CS2Client
-        _cs2_client = CS2Client()
-    return _cs2_client
+        cs2_client = CS2Client()
+    return cs2_client
 
 
 def _composite() -> Any:
@@ -91,18 +96,18 @@ def _composite() -> Any:
 
 
 def _cs4() -> Any:
-    global _cs4_client
-    if _cs4_client is None:
+    global cs4_client
+    if cs4_client is None:
         from app.services.retrieval.hybrid import HybridRetriever
         from app.services.justification.generator import JustificationGenerator
         from app.services.integration.cs4_client import CS4Client
         retriever = HybridRetriever()
         generator = JustificationGenerator(retriever=retriever)
-        _cs4_client = CS4Client(
+        cs4_client = CS4Client(
             justification_generator=generator,
             hybrid_retriever=retriever,
         )
-    return _cs4_client
+    return cs4_client
 
 
 def _track(name: str, status: str, duration: float) -> None:
@@ -541,10 +546,16 @@ async def read_resource(uri: str) -> str:
         from app.core.settings import settings
         return _json.dumps({
             "version": "2.0",
-            "alpha_vr_weight": settings.ALPHA_VR_WEIGHT,
-            "beta_synergy_weight": settings.BETA_SYNERGY_WEIGHT,
+            "alpha": settings.ALPHA_VR_WEIGHT,
+            "beta": settings.BETA_SYNERGY_WEIGHT,
+            "gamma_0": 0.0025,
+            "gamma_1": 0.05,
+            "gamma_2": 0.025,
+            "gamma_3": 0.01,
             "lambda_penalty": settings.LAMBDA_PENALTY,
             "delta_position": settings.DELTA_POSITION,
+            "alpha_vr_weight": settings.ALPHA_VR_WEIGHT,
+            "beta_synergy_weight": settings.BETA_SYNERGY_WEIGHT,
             "dimension_weights": {
                 "data_infrastructure": settings.W_DATA_INFRA,
                 "ai_governance": settings.W_AI_GOVERNANCE,

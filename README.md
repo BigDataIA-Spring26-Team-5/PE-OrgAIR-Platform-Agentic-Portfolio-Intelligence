@@ -176,6 +176,7 @@ poetry install
 docker compose up -d          # Redis on :6379, ChromaDB on :8001
 
 # 3. Copy and fill env file
+
 cp .env.example .env
 # Required: SNOWFLAKE_*, AWS_*, REDIS_URL, GROQ_API_KEY, ANTHROPIC_API_KEY
 

@@ -328,9 +328,9 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         else:
             raise ValueError(f"Unknown tool: {name}")
         return result
-    except Exception:
+    except Exception as e:
         status = "error"
-        raise
+        return {"error": f"{type(e).__name__}: {e}"}
     finally:
         _track(name, status, time.time() - start)
 
@@ -350,82 +350,83 @@ async def _calculate_org_air_score(args: dict) -> dict:
     assessment = await asyncio.to_thread(client.get_assessment, ticker)
     if not assessment:
         return {
-            "ticker": ticker,
-            "status": "not_found",
+            "company_id": ticker,
             "error": (
                 "No assessment found for this ticker. "
                 "Run POST /api/v1/scoring/orgair/portfolio first."
             ),
         }
     return {
-        "ticker": assessment.ticker,
-        "status": "success",
-        "org_air_score": assessment.org_air_score,
+        "company_id": assessment.ticker,
+        "org_air": assessment.org_air_score,
         "vr_score": assessment.valuation_risk,
         "hr_score": assessment.human_capital_risk,
-        "synergy": assessment.synergy,
-        "position_factor": assessment.position_factor,
-        "talent_concentration": assessment.talent_concentration,
+        "synergy_score": assessment.synergy,
+        "confidence_interval": list(getattr(assessment, "confidence_interval", (0.0, 0.0))),
         "dimension_scores": {
-            dim: {
-                "score": ds.score,
-                "level": ds.level,
-                "level_name": ds.level_name,
-            }
+            dim: ds.score
             for dim, ds in assessment.dimension_scores.items()
         },
     }
 
 
 async def _get_company_evidence(args: dict) -> dict:
-    """Delegates to CS2Client (fetches from S3 directly — needs AWS credentials)."""
+    """Calls FastAPI GET /api/v1/rag/evidence/{ticker} (requires FastAPI running)."""
+    import httpx
     ticker = args["company_id"].upper()
     dimension = args.get("dimension")
-    limit = int(args.get("limit", 50))
+    limit = int(args.get("limit", 10))
+    params = {"limit": limit}
+    if dimension:
+        params["dimension"] = dimension
+    url = f"http://localhost:8000/api/v1/rag/evidence/{ticker}"
 
-    dim_to_signal = {
-        "data_infrastructure": ["digital_presence"],
-        "ai_governance": ["governance_signals"],
-        "technology_stack": ["digital_presence", "technology_hiring"],
-        "talent": ["technology_hiring"],
-        "leadership": ["leadership_signals"],
-        "use_case_portfolio": ["innovation_activity"],
-        "culture": ["culture_signals"],
-    }
-    signal_cats = dim_to_signal.get(dimension) if dimension else None
+    def _fetch():
+        with httpx.Client(timeout=None) as client:
+            return client.get(url, params=params)
 
-    try:
-        client = await asyncio.to_thread(_cs2)
-        evidence = await asyncio.to_thread(client.get_evidence, ticker, signal_categories=signal_cats)
-    except Exception as e:
+    response = await asyncio.to_thread(_fetch)
+    if response.status_code != 200:
         return {
             "company_id": ticker,
             "dimension": dimension,
             "evidence": [],
             "count": 0,
-            "error": str(e),
+            "error": f"FastAPI returned {response.status_code}: {response.text[:300]}",
         }
-
-    items = [
-        {
-            "evidence_id": e.evidence_id,
-            "source_type": e.source_type,
-            "signal_category": e.signal_category,
-            "content": e.content[:500],
-            "confidence": e.confidence,
-        }
-        for e in evidence[:limit]
-    ]
-    return {"company_id": ticker, "dimension": dimension, "evidence": items, "count": len(items)}
+    data = response.json()
+    return {"evidence": data.get("evidence", []), "count": data.get("count", 0)}
 
 
 async def _generate_justification(args: dict) -> dict:
-    """Delegates to CS4Client (needs ChromaDB + Snowflake + LLM)."""
+    """Calls FastAPI GET /api/v1/rag/justify/{ticker}/{dimension} (requires FastAPI running)."""
+    import httpx
     ticker = args["company_id"].upper()
     dimension = args["dimension"]
-    client = await asyncio.to_thread(_cs4)
-    result = await asyncio.to_thread(client.generate_justification, ticker, dimension)
-    return result.to_dict()
+    url = f"http://localhost:8000/api/v1/rag/justify/{ticker}/{dimension}"
+
+    def _fetch():
+        with httpx.Client(timeout=None) as client:
+            return client.get(url)
+
+    response = await asyncio.to_thread(_fetch)
+    if response.status_code != 200:
+        return {
+            "company_id": ticker,
+            "dimension": dimension,
+            "error": f"FastAPI returned {response.status_code}: {response.text[:300]}",
+        }
+    data = response.json()
+    return {
+        "dimension": data.get("dimension", dimension),
+        "score": data.get("score"),
+        "level": data.get("level"),
+        "level_name": data.get("level_name"),
+        "evidence_strength": data.get("evidence_strength"),
+        "rubric_criteria": data.get("rubric_criteria"),
+        "supporting_evidence": data.get("supporting_evidence", []),
+        "gaps_identified": data.get("gaps_identified", []),
+    }
 
 
 async def _project_ebitda_impact(args: dict) -> dict:
@@ -442,7 +443,17 @@ async def _project_ebitda_impact(args: dict) -> dict:
         float(args["h_r_score"]),
         sector,
     )
-    return projection.to_dict()
+    net = projection.net_impact_pct
+    return {
+        "delta_air": float(projection.score_improvement),
+        "scenarios": {
+            "conservative": f"{net * 0.7:.2f}%",
+            "base": f"{net:.2f}%",
+            "optimistic": f"{net * 1.3:.2f}%",
+        },
+        "risk_adjusted": f"{projection.adjusted_net_impact_pct:.2f}%",
+        "requires_approval": projection.score_improvement > 20 or projection.adjusted_net_impact_pct > 10.0,
+    }
 
 
 async def _run_gap_analysis(args: dict) -> dict:
@@ -469,9 +480,7 @@ async def _run_gap_analysis(args: dict) -> dict:
 
 async def _get_portfolio_summary(args: dict) -> dict:
     """Aggregates all portfolio companies from CS3 (needs FastAPI running)."""
-    from app.services.composite_scoring_service import (
-        COMPANY_NAMES, COMPANY_SECTORS, MARKET_CAP_PERCENTILES,
-    )
+    from app.services.composite_scoring_service import COMPANY_SECTORS
     from app.config.company_mappings import CS3_PORTFOLIO
 
     fund_id = args.get("fund_id", "PE-FUND-I")
@@ -480,43 +489,175 @@ async def _get_portfolio_summary(args: dict) -> dict:
 
     for ticker in CS3_PORTFOLIO:
         assessment = await asyncio.to_thread(client.get_assessment, ticker)
-        org_air = vr = hr = synergy = pf = 0.0
-        dim_scores: dict = {}
-        if assessment:
-            org_air = assessment.org_air_score
-            vr = assessment.valuation_risk
-            hr = assessment.human_capital_risk
-            synergy = assessment.synergy
-            pf = assessment.position_factor
-            dim_scores = {dim: ds.score for dim, ds in assessment.dimension_scores.items()}
+        org_air = assessment.org_air_score if assessment else 0.0
         companies.append({
             "ticker": ticker,
-            "name": COMPANY_NAMES.get(ticker, ticker),
+            "org_air": org_air,
             "sector": COMPANY_SECTORS.get(ticker, ""),
-            "org_air_score": org_air,
-            "vr_score": vr,
-            "hr_score": hr,
-            "synergy": synergy,
-            "position_factor": pf,
-            "dimension_scores": dim_scores,
-            "market_cap_percentile": MARKET_CAP_PERCENTILES.get(ticker, 0.0),
         })
 
-    scores = [c["org_air_score"] for c in companies if c["org_air_score"] > 0]
-    vr_scores = [c["vr_score"] for c in companies if c["vr_score"] > 0]
-    hr_scores = [c["hr_score"] for c in companies if c["hr_score"] > 0]
-    avg = lambda lst: round(sum(lst) / len(lst), 2) if lst else 0.0
+    scores = [c["org_air"] for c in companies if c["org_air"] > 0]
+    avg = lambda lst: round(sum(lst) / len(lst), 1) if lst else 0.0
 
     return {
         "fund_id": fund_id,
+        "fund_air": avg(scores),
+        "company_count": len(companies),
         "companies": companies,
-        "fund_air_score": avg(scores),
-        "total_companies": len(companies),
-        "ai_leaders": sum(1 for c in companies if c["org_air_score"] >= 70),
-        "ai_laggards": sum(1 for c in companies if 0 < c["org_air_score"] < 50),
-        "avg_vr": avg(vr_scores),
-        "avg_hr": avg(hr_scores),
     }
+
+
+# ---------------------------------------------------------------------------
+# Resources — addressable data exposed to the LLM
+# ---------------------------------------------------------------------------
+
+@server.list_resources()
+async def list_resources() -> list[types.Resource]:
+    return [
+        types.Resource(
+            uri="orgair://parameters/v2.0",
+            name="Org-AI-R Scoring Parameters v2.0",
+            description=(
+                "Current scoring parameters: ALPHA_VR_WEIGHT, BETA_SYNERGY_WEIGHT, "
+                "dimension weights, and HITL thresholds from app config."
+            ),
+        ),
+        types.Resource(
+            uri="orgair://sectors",
+            name="Sector Definitions",
+            description=(
+                "Sector baselines, EBITDA multipliers, and dimension weights "
+                "for the 5 PE portfolio companies (NVDA, JPM, WMT, GE, DG)."
+            ),
+        ),
+    ]
+
+
+@server.read_resource()
+async def read_resource(uri: str) -> str:
+    import json as _json
+    uri = str(uri).rstrip("/")
+    if uri == "orgair://parameters/v2.0":
+        from app.core.settings import settings
+        return _json.dumps({
+            "version": "2.0",
+            "alpha_vr_weight": settings.ALPHA_VR_WEIGHT,
+            "beta_synergy_weight": settings.BETA_SYNERGY_WEIGHT,
+            "lambda_penalty": settings.LAMBDA_PENALTY,
+            "delta_position": settings.DELTA_POSITION,
+            "dimension_weights": {
+                "data_infrastructure": settings.W_DATA_INFRA,
+                "ai_governance": settings.W_AI_GOVERNANCE,
+                "technology_stack": settings.W_TECH_STACK,
+                "talent": settings.W_TALENT,
+                "leadership": settings.W_LEADERSHIP,
+                "use_case_portfolio": settings.W_USE_CASES,
+                "culture": settings.W_CULTURE,
+            },
+            "hitl_thresholds": {
+                "score_change": settings.HITL_SCORE_CHANGE_THRESHOLD,
+                "ebitda_projection": settings.HITL_EBITDA_PROJECTION_THRESHOLD,
+            },
+        })
+    if uri == "orgair://sectors":
+        from app.services.composite_scoring_service import COMPANY_SECTORS, COMPANY_NAMES
+        from app.services.value_creation.ebitda import SECTOR_EBITDA_MULTIPLIERS, IMPLEMENTATION_COST_FACTOR
+        return _json.dumps({
+            "portfolio_companies": {
+                ticker: {
+                    "name": COMPANY_NAMES.get(ticker, ticker),
+                    "sector": sector,
+                    "ebitda_multiplier": SECTOR_EBITDA_MULTIPLIERS.get(sector, 0.30),
+                    "implementation_cost_factor": IMPLEMENTATION_COST_FACTOR.get(sector, 0.10),
+                }
+                for ticker, sector in COMPANY_SECTORS.items()
+            },
+            "sector_baselines": {
+                "technology": {"h_r_base": 85, "weight_talent": 0.18},
+                "financial_services": {"h_r_base": 72, "weight_governance": 0.18},
+                "retail": {"h_r_base": 57, "weight_use_cases": 0.15},
+                "manufacturing": {"h_r_base": 52, "weight_data_infra": 0.20},
+            },
+        })
+    return "{}"
+
+
+# ---------------------------------------------------------------------------
+# Prompts — reusable workflow templates
+# ---------------------------------------------------------------------------
+
+@server.list_prompts()
+async def list_prompts() -> list[types.Prompt]:
+    return [
+        types.Prompt(
+            name="due_diligence_assessment",
+            description="Complete due diligence assessment for a portfolio company",
+            arguments=[
+                types.PromptArgument(name="company_id", description="Ticker symbol (NVDA, JPM, WMT, GE, DG)", required=True),
+            ],
+        ),
+        types.Prompt(
+            name="ic_meeting_prep",
+            description="Prepare Investment Committee meeting package for a company",
+            arguments=[
+                types.PromptArgument(name="company_id", description="Ticker symbol (NVDA, JPM, WMT, GE, DG)", required=True),
+            ],
+        ),
+    ]
+
+
+@server.get_prompt()
+async def get_prompt(name: str, arguments: dict) -> types.GetPromptResult:
+    company_id = (arguments or {}).get("company_id", "<company_id>")
+    if name == "due_diligence_assessment":
+        return types.GetPromptResult(
+            description=f"Due diligence assessment for {company_id}",
+            messages=[
+                types.PromptMessage(
+                    role="user",
+                    content=types.TextContent(
+                        type="text",
+                        text=(
+                            f"Perform a full due diligence assessment for {company_id}:\n"
+                            f"1. Calculate the Org-AI-R score using calculate_org_air_score\n"
+                            f"2. For any dimensions scoring below 60, call generate_justification "
+                            f"to understand the evidence and gaps\n"
+                            f"3. Run gap analysis with run_gap_analysis targeting org_air=75\n"
+                            f"4. Project EBITDA impact using project_ebitda_impact with the "
+                            f"current score as entry_score and 75 as target_score\n"
+                            f"5. Summarise findings: strengths, gaps, and value-creation actions"
+                        ),
+                    ),
+                ),
+            ],
+        )
+    if name == "ic_meeting_prep":
+        return types.GetPromptResult(
+            description=f"IC meeting preparation package for {company_id}",
+            messages=[
+                types.PromptMessage(
+                    role="user",
+                    content=types.TextContent(
+                        type="text",
+                        text=(
+                            f"Prepare an Investment Committee package for {company_id}:\n"
+                            f"1. Retrieve the portfolio summary with get_portfolio_summary to "
+                            f"benchmark {company_id} against the fund\n"
+                            f"2. Get the full Org-AI-R score with calculate_org_air_score\n"
+                            f"3. Pull supporting evidence with get_company_evidence for the "
+                            f"top 2 strongest and weakest dimensions\n"
+                            f"4. Generate justifications with generate_justification for each "
+                            f"of those dimensions\n"
+                            f"5. Project EBITDA impact across conservative / base / optimistic "
+                            f"scenarios using project_ebitda_impact\n"
+                            f"6. Produce a one-page IC memo: executive summary, score vs peers, "
+                            f"key risks, and recommended value-creation initiatives"
+                        ),
+                    ),
+                ),
+            ],
+        )
+    return types.GetPromptResult(description=name, messages=[])
 
 
 # ---------------------------------------------------------------------------

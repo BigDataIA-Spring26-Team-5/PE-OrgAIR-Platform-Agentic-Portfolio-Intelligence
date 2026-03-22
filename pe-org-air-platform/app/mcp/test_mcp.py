@@ -51,11 +51,8 @@ FASTAPI_URL = "http://localhost:8000"
 # Tools that make HTTP calls to FastAPI
 NEEDS_FASTAPI = {
     "calculate_org_air_score", "run_gap_analysis", "get_portfolio_summary",
+    "generate_justification", "get_company_evidence",
 }
-# Tools that call AWS S3 directly
-NEEDS_S3 = {"get_company_evidence"}
-# Tools that need ChromaDB + Snowflake + LLM
-NEEDS_RAG = {"generate_justification"}
 
 
 def check_fastapi() -> bool:
@@ -65,21 +62,6 @@ def check_fastapi() -> bool:
     except Exception:
         return False
 
-
-def check_s3() -> bool:
-    """Try to import boto3 and create a client — does NOT make a network call."""
-    try:
-        import boto3
-        from app.core.settings import settings
-        boto3.client(
-            "s3",
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID.get_secret_value(),
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY.get_secret_value(),
-            region_name=settings.AWS_REGION,
-        )
-        return True
-    except Exception:
-        return False
 
 # ---------------------------------------------------------------------------
 # Tool menu: name → (description, default arguments, timeout)
@@ -95,7 +77,7 @@ TOOLS = {
     },
     "2": {
         "name": "get_company_evidence",
-        "description": "Retrieve CS2 evidence for a company (requires S3)",
+        "description": "Retrieve CS2 evidence for a company (requires FastAPI running)",
         "defaults": {"company_id": "NVDA", "limit": 5},
         "prompts": [
             ("company_id", "Ticker", str),
@@ -106,7 +88,7 @@ TOOLS = {
     },
     "3": {
         "name": "generate_justification",
-        "description": "Generate RAG justification for a dimension (requires ChromaDB + Snowflake + LLM)",
+        "description": "Generate RAG justification for a dimension (requires FastAPI running)",
         "defaults": {"company_id": "NVDA", "dimension": "talent"},
         "prompts": [
             ("company_id", "Ticker", str),
@@ -170,9 +152,18 @@ def print_menu():
     print("\n" + "=" * 55)
     print("  PE Org-AI-R MCP Tool Tester")
     print("=" * 55)
+    print("  -- Tools --")
     for num, cfg in TOOLS.items():
         print(f"  {num}. {cfg['name']}")
         print(f"     {cfg['description']}")
+    print("  -- Resources --")
+    print("  r1. List all resources")
+    print("  r2. Read orgair://parameters/v2.0")
+    print("  r3. Read orgair://sectors")
+    print("  -- Prompts --")
+    print("  p1. List all prompts")
+    print("  p2. Get due_diligence_assessment prompt")
+    print("  p3. Get ic_meeting_prep prompt")
     print("  q. Quit")
     print("=" * 55)
 
@@ -189,22 +180,50 @@ async def run_tool(session: ClientSession, tool_cfg: dict, args: dict):
             print("  Start it with:  uvicorn app.main:app --reload")
             print("  Proceeding anyway — tool will likely timeout.\n")
 
-    if tool_name in NEEDS_S3:
-        if check_s3():
-            print("  S3 credentials look valid (client created)")
-        else:
-            print("  WARNING: S3 client could not be created — check AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / S3_BUCKET in .env")
-            print("  Proceeding anyway — server will return an error within 20s.\n")
 
     print(f"\n>>> Calling: {tool_cfg['name']}")
     print(f"    Args: {json.dumps(args, indent=2)}")
     print("    Waiting for response (no timeout)...\n")
     try:
         result = await session.call_tool(tool_cfg["name"], args)
-        raw = result.content[0].text
-        parsed = json.loads(raw)
-        print("Result:")
-        print(json.dumps(parsed, indent=2))
+        raw = result.content[0].text if result.content else ""
+        if not raw:
+            print("ERROR: empty response from server")
+            return
+        try:
+            parsed = json.loads(raw)
+            print("Result:")
+            print(json.dumps(parsed, indent=2))
+            print("\nSUCCESS")
+        except json.JSONDecodeError:
+            print(f"SERVER ERROR: {raw}")
+    except Exception as e:
+        print(f"ERROR: {e}")
+
+
+async def run_resource(session: ClientSession, uri: str):
+    print(f"\n>>> Reading resource: {uri}\n")
+    try:
+        result = await session.read_resource(uri)
+        for content in result.contents:
+            try:
+                parsed = json.loads(content.text)
+                print(json.dumps(parsed, indent=2))
+            except (json.JSONDecodeError, AttributeError):
+                print(content)
+        print("\nSUCCESS")
+    except Exception as e:
+        print(f"ERROR: {e}")
+
+
+async def run_prompt(session: ClientSession, name: str):
+    company_id = input(f"  Ticker for '{name}' [NVDA]: ").strip() or "NVDA"
+    print(f"\n>>> Getting prompt: {name}  company_id={company_id}\n")
+    try:
+        result = await session.get_prompt(name, {"company_id": company_id})
+        for msg in result.messages:
+            print(f"[{msg.role}]")
+            print(msg.content.text)
         print("\nSUCCESS")
     except Exception as e:
         print(f"ERROR: {e}")
@@ -223,21 +242,47 @@ async def main():
 
             while True:
                 print_menu()
-                choice = input("Select a tool to test: ").strip().lower()
+                choice = input("Select an option: ").strip().lower()
 
                 if choice == "q":
                     print("Goodbye.")
                     break
 
-                if choice not in TOOLS:
-                    print(f"Invalid choice '{choice}'. Enter 1-6 or q.")
+                elif choice == "r1":
+                    result = await session.list_resources()
+                    print("\n>>> Resources:")
+                    for r in result.resources:
+                        print(f"  {r.uri}  —  {r.name}")
+                        print(f"    {r.description}")
+
+                elif choice == "r2":
+                    await run_resource(session, "orgair://parameters/v2.0")
+
+                elif choice == "r3":
+                    await run_resource(session, "orgair://sectors")
+
+                elif choice == "p1":
+                    result = await session.list_prompts()
+                    print("\n>>> Prompts:")
+                    for p in result.prompts:
+                        print(f"  {p.name}  —  {p.description}")
+
+                elif choice == "p2":
+                    await run_prompt(session, "due_diligence_assessment")
+
+                elif choice == "p3":
+                    await run_prompt(session, "ic_meeting_prep")
+
+                elif choice in TOOLS:
+                    tool_cfg = TOOLS[choice]
+                    args = collect_args(tool_cfg)
+                    await run_tool(session, tool_cfg, args)
+
+                else:
+                    print(f"Invalid choice '{choice}'.")
                     continue
 
-                tool_cfg = TOOLS[choice]
-                args = collect_args(tool_cfg)
-                await run_tool(session, tool_cfg, args)
-
-                again = input("\nRun another tool? (y/n) [y]: ").strip().lower()
+                again = input("\nRun another? (y/n) [y]: ").strip().lower()
                 if again == "n":
                     print("Goodbye.")
                     break

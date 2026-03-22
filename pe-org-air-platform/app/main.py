@@ -276,6 +276,10 @@ app.include_router(assessment_router)           # Read-only assessment results
 app.include_router(rag_router)
 app.include_router(analyst_notes_router)
 
+# CS5 — Agentic Due Diligence
+from app.routers.due_diligence import router as dd_router
+app.include_router(dd_router)
+
 
 # ── Root Endpoint ─────────────────────────────────────────────────────────
 

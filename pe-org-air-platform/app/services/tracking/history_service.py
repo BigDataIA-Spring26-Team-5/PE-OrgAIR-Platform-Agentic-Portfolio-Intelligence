@@ -1,50 +1,63 @@
 """Assessment History Service — tracks score snapshots and trends over time."""
 from __future__ import annotations
 
-import logging
+import structlog
 from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal
 from typing import Dict, List, Optional, Any
 
 from app.services.integration.cs1_client import CS1Client
 from app.services.integration.cs3_client import CS3Client, DIMENSIONS
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 @dataclass
 class AssessmentSnapshot:
     """Point-in-time score capture."""
     company_id: str
-    org_air_score: float
-    vr_score: float
-    hr_score: float
-    synergy: float
-    dimension_scores: Dict[str, float] = field(default_factory=dict)
-    confidence: float = 0.0
+    org_air: Decimal = Decimal("0.0")
+    vr_score: Decimal = Decimal("0.0")
+    hr_score: Decimal = Decimal("0.0")
+    synergy_score: Decimal = Decimal("0.0")
+    dimension_scores: Dict[str, Decimal] = field(default_factory=dict)
+    confidence_interval: tuple = (0.0, 0.0)
+    evidence_count: int = 0
     timestamp: str = ""
     assessor_id: str = "system"
-    assessment_type: str = "automated"
+    assessment_type: str = "full"
 
     def __post_init__(self):
         if not self.timestamp:
             self.timestamp = datetime.now(timezone.utc).isoformat()
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        # Convert Decimal fields to float for JSON serialization
+        for k in ("org_air", "vr_score", "hr_score", "synergy_score"):
+            if isinstance(d.get(k), Decimal):
+                d[k] = float(d[k])
+        if d.get("dimension_scores"):
+            d["dimension_scores"] = {
+                dim: float(v) if isinstance(v, Decimal) else v
+                for dim, v in d["dimension_scores"].items()
+            }
+        return d
 
 
 @dataclass
 class AssessmentTrend:
     """Computed trend from assessment history."""
     company_id: str
-    current_score: float
-    entry_score: float
-    delta_30d: float
-    delta_90d: float
-    direction: str  # "improving", "stable", "declining"
-    snapshot_count: int
+    current_org_air: float = 0.0
+    entry_org_air: float = 0.0
+    delta_since_entry: float = 0.0
+    delta_30d: Optional[float] = None
+    delta_90d: Optional[float] = None
+    trend_direction: str = "stable"  # "improving", "stable", "declining"
+    snapshot_count: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -56,111 +69,133 @@ class AssessmentHistoryService:
     def __init__(self, cs1_client: CS1Client, cs3_client: CS3Client):
         self.cs1 = cs1_client
         self.cs3 = cs3_client
-        self._history: Dict[str, List[AssessmentSnapshot]] = defaultdict(list)
+        self._cache: Dict[str, List[AssessmentSnapshot]] = defaultdict(list)
 
-    def record_assessment(
+    async def record_assessment(
         self,
         company_id: str,
         assessor_id: str = "system",
-        assessment_type: str = "automated",
+        assessment_type: str = "full",
     ) -> AssessmentSnapshot:
         """Record current scores as a snapshot."""
         ticker = company_id.upper()
         assessment = self.cs3.get_assessment(ticker)
 
-        dim_scores: Dict[str, float] = {}
-        org_air = 0.0
-        vr = 0.0
-        hr = 0.0
-        synergy = 0.0
+        dim_scores: Dict[str, Decimal] = {}
+        org_air = Decimal("0.0")
+        vr = Decimal("0.0")
+        hr = Decimal("0.0")
+        synergy = Decimal("0.0")
 
         if assessment:
-            org_air = assessment.org_air_score
-            vr = assessment.valuation_risk
-            hr = assessment.human_capital_risk
-            synergy = assessment.synergy
+            org_air = Decimal(str(assessment.org_air_score))
+            vr = Decimal(str(assessment.valuation_risk))
+            hr = Decimal(str(assessment.human_capital_risk))
+            synergy = Decimal(str(assessment.synergy))
             dim_scores = {
-                dim: ds.score
+                dim: Decimal(str(ds.score))
                 for dim, ds in assessment.dimension_scores.items()
             }
 
         snapshot = AssessmentSnapshot(
             company_id=ticker,
-            org_air_score=org_air,
+            org_air=org_air,
             vr_score=vr,
             hr_score=hr,
-            synergy=synergy,
+            synergy_score=synergy,
             dimension_scores=dim_scores,
             assessor_id=assessor_id,
             assessment_type=assessment_type,
         )
 
-        self._history[ticker].append(snapshot)
+        await self._store_snapshot(snapshot)
+        self._cache[ticker].append(snapshot)
         logger.info(
-            "assessment_recorded ticker=%s org_air=%.2f snapshots=%d",
-            ticker, org_air, len(self._history[ticker]),
+            "assessment_recorded",
+            ticker=ticker,
+            org_air=float(org_air),
+            snapshots=len(self._cache[ticker]),
         )
         return snapshot
 
-    def get_history(
-        self, company_id: str, days: int = 90
+    async def _store_snapshot(self, snapshot: AssessmentSnapshot) -> None:
+        """Persist snapshot to Snowflake (stub for production INSERT)."""
+        pass  # Production: INSERT INTO assessment_snapshots VALUES (...)
+
+    async def get_history(
+        self, company_id: str, days: int = 365
     ) -> List[AssessmentSnapshot]:
         """Retrieve snapshots for a company within the given time window."""
         ticker = company_id.upper()
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        snapshots = self._history.get(ticker, [])
+        snapshots = self._cache.get(ticker, [])
         return [
             s for s in snapshots
             if datetime.fromisoformat(s.timestamp) >= cutoff
         ]
 
-    def calculate_trend(self, company_id: str) -> AssessmentTrend:
+    async def calculate_trend(self, company_id: str) -> AssessmentTrend:
         """Compute score trend from history."""
         ticker = company_id.upper()
-        snapshots = self._history.get(ticker, [])
+        history = await self.get_history(ticker, days=365)
 
-        if not snapshots:
+        if not history:
+            # Try current assessment only
+            assessment = self.cs3.get_assessment(ticker)
+            current = float(assessment.org_air_score) if assessment else 0.0
             return AssessmentTrend(
                 company_id=ticker,
-                current_score=0.0,
-                entry_score=0.0,
-                delta_30d=0.0,
-                delta_90d=0.0,
-                direction="stable",
+                current_org_air=current,
+                entry_org_air=current,
+                delta_since_entry=0.0,
+                delta_30d=None,
+                delta_90d=None,
+                trend_direction="stable",
                 snapshot_count=0,
             )
 
-        current = snapshots[-1].org_air_score
-        entry = snapshots[0].org_air_score
+        # Sort by timestamp
+        sorted_history = sorted(history, key=lambda s: s.timestamp)
+
+        current = float(sorted_history[-1].org_air)
+        entry = float(sorted_history[0].org_air)
 
         now = datetime.now(timezone.utc)
+
+        # Find first snapshot >= 30 days old
+        cutoff_30 = now - timedelta(days=30)
         scores_30d = [
-            s.org_air_score for s in snapshots
-            if datetime.fromisoformat(s.timestamp) >= now - timedelta(days=30)
+            float(s.org_air) for s in sorted_history
+            if datetime.fromisoformat(s.timestamp) >= cutoff_30
         ]
+
+        cutoff_90 = now - timedelta(days=90)
         scores_90d = [
-            s.org_air_score for s in snapshots
-            if datetime.fromisoformat(s.timestamp) >= now - timedelta(days=90)
+            float(s.org_air) for s in sorted_history
+            if datetime.fromisoformat(s.timestamp) >= cutoff_90
         ]
 
-        delta_30d = current - scores_30d[0] if scores_30d else 0.0
-        delta_90d = current - scores_90d[0] if scores_90d else 0.0
+        delta_30d = round(current - scores_30d[0], 2) if scores_30d else None
+        delta_90d = round(current - scores_90d[0], 2) if scores_90d else None
 
-        if delta_30d > 2:
+        # Direction based on delta (threshold: ±5)
+        delta = delta_30d if delta_30d is not None else 0.0
+        if delta > 5:
             direction = "improving"
-        elif delta_30d < -2:
+        elif delta < -5:
             direction = "declining"
         else:
             direction = "stable"
 
         return AssessmentTrend(
             company_id=ticker,
-            current_score=current,
-            entry_score=entry,
-            delta_30d=round(delta_30d, 2),
-            delta_90d=round(delta_90d, 2),
-            direction=direction,
-            snapshot_count=len(snapshots),
+            current_org_air=current,
+            entry_org_air=entry,
+            delta_since_entry=round(current - entry, 2),
+            delta_30d=delta_30d,
+            delta_90d=delta_90d,
+            trend_direction=direction,
+            snapshot_count=len(sorted_history),
         )
 
 

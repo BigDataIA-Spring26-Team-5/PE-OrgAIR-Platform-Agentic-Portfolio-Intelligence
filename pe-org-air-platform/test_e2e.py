@@ -22,6 +22,13 @@ def check(name, fn):
         print(f"  FAIL  {name}")
         print(f"        {e}")
 
+
+def _unwrap(result):
+    """Unwrap List[TextContent] from call_tool into a dict."""
+    if isinstance(result, list) and len(result) > 0 and hasattr(result[0], "text"):
+        return json.loads(result[0].text)
+    return result
+
 def skip(name, reason):
     SKIP.append(name)
     print(f"  SKIP  {name}  ({reason})")
@@ -36,37 +43,37 @@ print("="*60)
 
 async def t_tool1():
     from app.mcp.server import call_tool
-    r = await call_tool("calculate_org_air_score", {"company_id": "NVDA"})
+    r = _unwrap(await call_tool("calculate_org_air_score", {"company_id": "NVDA"}))
     assert "org_air" in r, f"missing org_air: {r}"
     print(f"        NVDA org_air={r['org_air']:.2f}  vr={r.get('vr_score',0):.2f}  hr={r.get('hr_score',0):.2f}")
 
 async def t_tool2():
     from app.mcp.server import call_tool
-    r = await call_tool("get_company_evidence", {"company_id": "NVDA", "limit": 3})
+    r = _unwrap(await call_tool("get_company_evidence", {"company_id": "NVDA", "limit": 3}))
     assert "evidence" in r
     print(f"        evidence count={len(r['evidence'])}")
 
 async def t_tool3():
     from app.mcp.server import call_tool
-    r = await call_tool("generate_justification", {"company_id": "NVDA", "dimension": "talent"})
+    r = _unwrap(await call_tool("generate_justification", {"company_id": "NVDA", "dimension": "talent"}))
     print(f"        dimension={r.get('dimension')}  score={r.get('score')}  level={r.get('level')}")
 
 async def t_tool4():
     from app.mcp.server import call_tool
-    r = await call_tool("project_ebitda_impact", {
+    r = _unwrap(await call_tool("project_ebitda_impact", {
         "company_id": "NVDA", "entry_score": 62.0, "target_score": 85.0, "h_r_score": 93.0
-    })
+    }))
     assert "scenarios" in r
     print(f"        base={r['scenarios'].get('base')}  risk_adj={r.get('risk_adjusted')}")
 
 async def t_tool5():
     from app.mcp.server import call_tool
-    r = await call_tool("run_gap_analysis", {"company_id": "NVDA", "target_org_air": 90.0})
+    r = _unwrap(await call_tool("run_gap_analysis", {"company_id": "NVDA", "target_org_air": 90.0}))
     print(f"        gap result keys: {list(r.keys())[:4]}")
 
 async def t_tool6():
     from app.mcp.server import call_tool
-    r = await call_tool("get_portfolio_summary", {"fund_id": "PE-FUND-I"})
+    r = _unwrap(await call_tool("get_portfolio_summary", {"fund_id": "PE-FUND-I"}))
     companies = r.get("companies", [])
     print(f"        fund_air={r.get('fund_air')}  companies={len(companies)}")
     for c in companies:
@@ -148,7 +155,7 @@ async def t_hitl_auto_approve():
 async def t_hitl_real_score():
     """Run HITL check against real NVDA score from FastAPI."""
     from app.mcp.server import call_tool
-    r = await call_tool("calculate_org_air_score", {"company_id": "NVDA"})
+    r = _unwrap(await call_tool("calculate_org_air_score", {"company_id": "NVDA"}))
     org_air = r.get("org_air", 0.0)
     expected_hitl = org_air > 85 or org_air < 40
     print(f"        NVDA real org_air={org_air:.2f}  HITL expected={expected_hitl}")
@@ -205,7 +212,7 @@ print("\n" + "="*60)
 print("[4] ASSESSMENT HISTORY")
 print("="*60)
 
-def t_history_record():
+async def t_history_record():
     """record_assessment must call cs3_client.get_assessment."""
     from unittest.mock import MagicMock
     from app.services.tracking.history_service import AssessmentHistoryService
@@ -221,12 +228,12 @@ def t_history_record():
 
     mock_cs1 = MagicMock()
     svc = AssessmentHistoryService(cs1_client=mock_cs1, cs3_client=mock_cs3)
-    snap = svc.record_assessment("NVDA", assessor_id="analyst@pe.com")
-    assert snap.org_air_score == 84.9
+    snap = await svc.record_assessment("NVDA", assessor_id="analyst@pe.com")
+    assert float(snap.org_air) == 84.9
     assert snap.assessor_id == "analyst@pe.com"
-    print(f"        snapshot org_air={snap.org_air_score}  assessor_id={snap.assessor_id}")
+    print(f"        snapshot org_air={snap.org_air}  assessor_id={snap.assessor_id}")
 
-def t_history_trend():
+async def t_history_trend():
     from unittest.mock import MagicMock
     from app.services.tracking.history_service import AssessmentHistoryService
 
@@ -246,13 +253,13 @@ def t_history_trend():
         make_assessment(70.0), make_assessment(75.0), make_assessment(80.0)
     ]
     svc = AssessmentHistoryService(cs1_client=mock_cs1, cs3_client=mock_cs3)
-    svc.record_assessment("NVDA")
-    svc.record_assessment("NVDA")
-    svc.record_assessment("NVDA")
-    trend = svc.calculate_trend("NVDA")
-    assert trend.direction == "improving"
-    assert trend.current_score == 80.0
-    print(f"        trend direction={trend.direction}  delta_30d={trend.delta_30d}")
+    await svc.record_assessment("NVDA")
+    await svc.record_assessment("NVDA")
+    await svc.record_assessment("NVDA")
+    trend = await svc.calculate_trend("NVDA")
+    assert trend.trend_direction == "improving"
+    assert trend.current_org_air == 80.0
+    print(f"        trend direction={trend.trend_direction}  delta_30d={trend.delta_30d}")
 
 check("record_assessment stores snapshot with assessor_id", t_history_record)
 check("calculate_trend returns 'improving' after 3 rising snapshots", t_history_trend)
@@ -352,7 +359,7 @@ async def t_grader_patch():
     mock_assessment.dimension_scores = {}
 
     with patch.object(cs3_client, "get_assessment", return_value=mock_assessment) as mock:
-        result = await call_tool("calculate_org_air_score", {"company_id": "NVDA"})
+        result = _unwrap(await call_tool("calculate_org_air_score", {"company_id": "NVDA"}))
         mock.assert_called_once_with("NVDA")
         assert result["org_air"] == 84.94
         print(f"        patch worked: org_air={result['org_air']}  called_with='NVDA'  ✓")

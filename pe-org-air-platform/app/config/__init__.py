@@ -125,7 +125,7 @@ class Settings(BaseSettings):
 
     # HITL Thresholds
     HITL_SCORE_CHANGE_THRESHOLD: float = Field(default=15.0, ge=5, le=30)
-    HITL_EBITDA_PROJECTION_THRESHOLD: float = Field(default=10.0, ge=5, le=25)
+    HITL_EBITDA_PROJECTION_THRESHOLD: float = Field(default=5.0, ge=1, le=25)
 
     # Job Signals Pipeline Constants
     JOBSPY_REQUEST_DELAY: float = Field(default=6.0, ge=1.0, le=30.0)

@@ -54,9 +54,9 @@ class DDSummary(BaseModel):
 
 
 class DDApprovalRequest(BaseModel):
-    decision: str          # "approved" or "rejected"
-    approved_by: str
-    comments: str = ""
+    decision: str          # Must be exactly "approved" or "rejected" (case-sensitive)
+    approved_by: str       # Identity of the approver (e.g. "analyst@firm.com")
+    comments: str = ""     # Optional free-text justification
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +209,9 @@ async def get_dd_status(thread_id: str) -> DDSummary:
     summary="Approve or reject a paused HITL due diligence run",
     description=(
         "Resumes a graph that paused at an interrupt() HITL gate. "
-        "Pass decision='approved' or 'rejected' to continue the workflow."
+        "The `decision` field must be exactly **'approved'** or **'rejected'** (case-sensitive). "
+        "Any other value (e.g. 'Proceed', 'yes') is treated as a rejection. "
+        "Example body: `{\"decision\": \"approved\", \"approved_by\": \"analyst@firm.com\", \"comments\": \"Looks good\"}`"
     ),
 )
 async def approve_due_diligence(thread_id: str, body: DDApprovalRequest) -> DDSummary:

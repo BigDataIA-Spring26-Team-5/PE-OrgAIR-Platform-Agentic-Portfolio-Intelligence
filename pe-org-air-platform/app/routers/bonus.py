@@ -13,14 +13,16 @@ import os
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, Query, BackgroundTasks
 from fastapi.responses import FileResponse
 
 from app.core.dependencies import (
+    get_assessment_snapshot_repository,
     get_composite_scoring_repository,
     get_scoring_repository,
     get_portfolio_data_service,
 )
+from app.core.errors import ConflictError, NotFoundError
 
 router = APIRouter(prefix="/api/v1/bonus", tags=["CS5 — Bonus"])
 
@@ -57,23 +59,23 @@ async def compute_roi(
         None, description="Optional override for entry Org-AI-R score"
     ),
     composite_repo=Depends(get_composite_scoring_repository),
+    snapshot_repo=Depends(get_assessment_snapshot_repository),
 ):
     from app.services.tracking.investment_tracker import investment_tracker
-    from app.repositories.assessment_snapshot_repository import AssessmentSnapshotRepository
 
     ticker_u = _safe_ticker(ticker)
     row = composite_repo.fetch_orgair_row(ticker_u)
     if not row:
-        raise HTTPException(status_code=404, detail=f"No scoring row found for {ticker_u}")
+        raise NotFoundError("scoring_row", ticker_u)
     r = {k.lower(): v for k, v in row.items()}
     current_org_air = float(r.get("org_air") or 0.0)
     if current_org_air <= 0:
-        raise HTTPException(status_code=409, detail=f"Org-AI-R not computed for {ticker_u} yet")
+        raise ConflictError(f"Org-AI-R not computed for {ticker_u} yet")
 
     entry = entry_org_air
     if entry is None:
         try:
-            entry = AssessmentSnapshotRepository().get_entry_org_air(ticker=ticker_u, portfolio_id=None)
+            entry = snapshot_repo.get_entry_org_air(ticker=ticker_u, portfolio_id=None)
         except Exception:
             entry = None
 
@@ -119,7 +121,7 @@ async def generate_ic_memo(
 
     row = composite_repo.fetch_orgair_row(ticker_u)
     if not row:
-        raise HTTPException(status_code=404, detail=f"No scoring row found for {ticker_u}")
+        raise NotFoundError("scoring_row", ticker_u)
     r = {k.lower(): v for k, v in row.items()}
     scoring_result: Dict[str, Any] = {
         "company_id": ticker_u,

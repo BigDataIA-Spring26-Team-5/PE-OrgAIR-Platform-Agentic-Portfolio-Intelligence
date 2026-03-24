@@ -112,7 +112,7 @@ class ICMemoGenerator:
         try:
             from weasyprint import HTML  # type: ignore[import]
             return HTML
-        except ImportError:
+        except Exception:
             return None
 
     def generate(

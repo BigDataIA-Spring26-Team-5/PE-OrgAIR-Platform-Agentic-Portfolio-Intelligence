@@ -63,7 +63,7 @@ def _create_singletons(app: FastAPI) -> None:
     # ── 3. HybridRetriever ───────────────────────────────────────────────
     from app.services.retrieval.hybrid import HybridRetriever
 
-    app.state.hybrid_retriever = HybridRetriever()
+    app.state.hybrid_retriever = HybridRetriever(vector_store=app.state.vector_store)
 
     # Rebuild BM25 from persistent ChromaDB data (full coverage, not seed-query subset)
     doc_count = app.state.hybrid_retriever.rebuild_sparse_index_from_chroma()

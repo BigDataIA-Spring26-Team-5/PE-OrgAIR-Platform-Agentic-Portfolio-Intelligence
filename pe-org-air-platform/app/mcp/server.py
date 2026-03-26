@@ -131,102 +131,108 @@ server = Server(
 )
 
 # ---------------------------------------------------------------------------
-# Per-component lazy singletons
-# Each tool initialises only what it needs; expensive clients (Snowflake,
-# ChromaDB) are never touched unless the corresponding tool is called.
+# Module-level initialisation (CS5 v4 requirement)
 # ---------------------------------------------------------------------------
 
-_ebitda_calc = None
-_gap_analyzer = None
-_composite_svc = None
-_portfolio_svc = None
-
-# Module-level client references (None until first use).
 # Exposed at module level so grader tests can patch them:
-#   from app.mcp.server import cs3_client
-#   with patch.object(cs3_client, 'get_assessment', ...) as mock: ...
-cs3_client = None
+#   import app.mcp.server as s
+#   with patch.object(s.cs3_client, 'get_assessment', ...) as mock: ...
+cs1_client = None
 cs2_client = None
+cs3_client = None
 cs4_client = None
 
-# Module-level references for value-creation services
-ebitda_calculator = None   # set by _ebitda()
-gap_analyzer = None        # set by _gap()
+ebitda_calculator = None
+gap_analyzer = None
+portfolio_data_service = None
 
+try:
+    from app.services.integration.cs1_client import CS1Client
+    from app.services.integration.cs2_client import CS2Client
+    from app.services.integration.cs3_client import CS3Client
 
-def _ebitda() -> Any:
-    global _ebitda_calc
-    if _ebitda_calc is None:
-        from app.services.value_creation.ebitda import EBITDACalculator
-        _ebitda_calc = EBITDACalculator()
-    return _ebitda_calc
+    cs1_client = CS1Client()
+    cs2_client = CS2Client()
+    cs3_client = CS3Client()
+except Exception as e:  # pragma: no cover
+    logger.warning("cs_clients_init_failed", error=str(e))
 
+try:
+    from app.services.value_creation.ebitda import EBITDACalculator
+    from app.services.value_creation.gap_analysis import GapAnalyzer
 
-def _gap() -> Any:
-    global _gap_analyzer
-    if _gap_analyzer is None:
-        from app.services.value_creation.gap_analysis import GapAnalyzer
-        _gap_analyzer = GapAnalyzer()
-    return _gap_analyzer
+    ebitda_calculator = EBITDACalculator()
+    gap_analyzer = GapAnalyzer()
+except Exception as e:  # pragma: no cover
+    logger.warning("value_creation_init_failed", error=str(e))
+
+# Optional CS4 (RAG stack)
+try:
+    from app.services.retrieval.hybrid import HybridRetriever
+    from app.services.justification.generator import JustificationGenerator
+    from app.services.integration.cs4_client import CS4Client
+
+    _retriever = HybridRetriever()
+    _generator = JustificationGenerator(retriever=_retriever)
+    cs4_client = CS4Client(
+        justification_generator=_generator,
+        hybrid_retriever=_retriever,
+    )
+except Exception as e:  # pragma: no cover
+    logger.warning("cs4_client_init_failed", error=str(e))
+    cs4_client = None
+
+try:
+    from app.services.portfolio_data_service import PortfolioDataService
+    from app.services.composite_scoring_service import CompositeScoringService
+
+    if cs1_client is not None and cs2_client is not None and cs3_client is not None:
+        portfolio_data_service = PortfolioDataService(
+            cs1_client=cs1_client,
+            cs2_client=cs2_client,
+            cs3_client=cs3_client,
+            cs4_client=cs4_client,
+            composite_scoring_service=CompositeScoringService(),
+        )
+except Exception as e:  # pragma: no cover
+    logger.warning("portfolio_data_service_init_failed", error=str(e))
+    portfolio_data_service = None
 
 
 def _cs3() -> Any:
-    global cs3_client
     if cs3_client is None:
-        from app.services.integration.cs3_client import CS3Client
-        cs3_client = CS3Client()
+        raise RuntimeError("CS3 client not initialised")
     return cs3_client
 
 
 def _cs2() -> Any:
-    global cs2_client
     if cs2_client is None:
-        from app.services.integration.cs2_client import CS2Client
-        cs2_client = CS2Client()
+        raise RuntimeError("CS2 client not initialised")
     return cs2_client
 
 
-def _composite() -> Any:
-    global _composite_svc
-    if _composite_svc is None:
-        from app.services.composite_scoring_service import CompositeScoringService
-        _composite_svc = CompositeScoringService()
-    return _composite_svc
-
-
 def _cs4() -> Any:
-    global cs4_client
     if cs4_client is None:
-        from app.services.retrieval.hybrid import HybridRetriever
-        from app.services.justification.generator import JustificationGenerator
-        from app.services.integration.cs4_client import CS4Client
-        retriever = HybridRetriever()
-        generator = JustificationGenerator(retriever=retriever)
-        cs4_client = CS4Client(
-            justification_generator=generator,
-            hybrid_retriever=retriever,
-        )
+        raise RuntimeError("CS4 client not available")
     return cs4_client
 
 
+def _ebitda() -> Any:
+    if ebitda_calculator is None:
+        raise RuntimeError("EBITDA calculator not initialised")
+    return ebitda_calculator
+
+
+def _gap() -> Any:
+    if gap_analyzer is None:
+        raise RuntimeError("Gap analyzer not initialised")
+    return gap_analyzer
+
+
 def _portfolio() -> Any:
-    global _portfolio_svc
-    if _portfolio_svc is None:
-        from app.services.integration.cs1_client import CS1Client
-        from app.services.portfolio_data_service import PortfolioDataService
-        try:
-            cs4 = _cs4()
-        except Exception as e:
-            logger.warning("cs4_client_init_failed", error=str(e))
-            cs4 = None
-        _portfolio_svc = PortfolioDataService(
-            cs1_client=CS1Client(),
-            cs2_client=_cs2(),
-            cs3_client=_cs3(),
-            cs4_client=cs4,
-            composite_scoring_service=_composite(),
-        )
-    return _portfolio_svc
+    if portfolio_data_service is None:
+        raise RuntimeError("PortfolioDataService not initialised")
+    return portfolio_data_service
 
 
 def _track(name: str, status: str, duration: float) -> None:
@@ -413,9 +419,9 @@ TOOLS = [
     types.Tool(
         name="get_portfolio_summary",
         description=(
-            "Return a fund-level portfolio view aggregating all CS3 portfolio companies "
-            "(NVDA, JPM, WMT, GE, DG). Includes Fund-AI-R score, AI leaders/laggards "
-            "counts, average V^R and H^R, and per-company dimension scores."
+            "Return a fund-level portfolio view sourced from CS1 portfolio membership. "
+            "Includes Fund-AI-R score, AI leaders/laggards counts, average V^R and H^R, "
+            "and per-company scores."
         ),
         inputSchema={
             "type": "object",

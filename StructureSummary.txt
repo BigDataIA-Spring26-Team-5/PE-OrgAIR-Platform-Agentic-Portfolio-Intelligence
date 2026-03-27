@@ -3,7 +3,7 @@
   Architectural Diagram
 
   ╔══════════════════════════════════════════════════════════════════════════════════╗
-  ║                        PE ORG-AI-R PLATFORM PIPELINE                           ║
+  ║                        PE ORG-AI-R PLATFORM PIPELINE                             ║
   ╚══════════════════════════════════════════════════════════════════════════════════╝
 
   ━━━━━━━━━━━━━━━━━━━━━━ CS2: SIGNAL COLLECTION ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -39,21 +39,21 @@
     ║         EVIDENCE MAPPER (Table 1 Matrix)              ║
     ║              evidence_mapper.py                       ║
     ║                                                       ║
-    ║  9 sources × weights ──────────────────────────────► ║
+    ║  9 sources × weights ──────────────────────────────►  ║
     ║                                                       ║
-    ║  ┌─────────────────────┬──────────┬─────────────┐    ║
-    ║  │ Source              │ Primary  │ Weight      │    ║
-    ║  ├─────────────────────┼──────────┼─────────────┤    ║
-    ║  │ technology_hiring   │ talent   │ 0.70        │    ║
-    ║  │ innovation_activity │ tech_stk │ 0.50        │    ║
-    ║  │ digital_presence    │ data_inf │ 0.60        │    ║
-    ║  │ leadership_signals  │ leader   │ 0.60        │    ║
-    ║  │ sec_item_1          │ use_case │ 0.70        │    ║
-    ║  │ sec_item_1a         │ ai_gov   │ 0.80        │    ║
-    ║  │ sec_item_7          │ leader   │ 0.50        │    ║
-    ║  │ glassdoor_reviews   │ culture  │ 0.80        │    ║
-    ║  │ board_composition   │ ai_gov   │ 0.70        │    ║
-    ║  └─────────────────────┴──────────┴─────────────┘    ║
+    ║  ┌─────────────────────┬──────────┬─────────────┐     ║
+    ║  │ Source              │ Primary  │ Weight      │     ║
+    ║  ├─────────────────────┼──────────┼─────────────┤     ║
+    ║  │ technology_hiring   │ talent   │ 0.70        │     ║
+    ║  │ innovation_activity │ tech_stk │ 0.50        │     ║
+    ║  │ digital_presence    │ data_inf │ 0.60        │     ║
+    ║  │ leadership_signals  │ leader   │ 0.60        │     ║
+    ║  │ sec_item_1          │ use_case │ 0.70        │     ║
+    ║  │ sec_item_1a         │ ai_gov   │ 0.80        │     ║
+    ║  │ sec_item_7          │ leader   │ 0.50        │     ║
+    ║  │ glassdoor_reviews   │ culture  │ 0.80        │     ║
+    ║  │ board_composition   │ ai_gov   │ 0.70        │     ║
+    ║  └─────────────────────┴──────────┴─────────────┘     ║
     ╚═══════════════════════════════════════════════════════╝
 
                       ▼   (each source also distributes to secondary dimensions)
@@ -181,4 +181,384 @@
   6. Org-AI-R — Final score: 0.88 × [0.60×V^R + 0.40×H^R] + 0.12×Synergy
 
   The constants α=0.60, β=0.12 control how much internal readiness (V^R) vs. market position (H^R) vs. alignment synergy drives the final investment-grade score.
+
+  ---
+  Phase 5 — CS1: Company Registration
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  POST /api/v1/companies  { ticker, name }                                   │
+  │                                                                              │
+  │  1. Create company record ──────────────────────────► Snowflake: companies   │
+  │                                                                              │
+  │  2. Background: Groq metadata enrichment                                     │
+  │     └─ sector, revenue_estimate, employee_count ──► Snowflake: companies     │
+  │                                                                              │
+  │  3. Background: Create portfolio entry ────────────► Snowflake: portfolio    │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  ━━━━━━━━━━━━━━━━━━━━━━━━ CS4: RAG & RETRIEVAL ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Phase 6 — Evidence Indexing & Hybrid Retrieval
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  POST /api/v1/rag/index/{ticker}                                             │
+  │                                                                              │
+  │  Snowflake chunks + S3 signals                                               │
+  │        │                                                                     │
+  │        ├──► VectorStore (Chroma Cloud HTTP)                                  │
+  │        │     ├─ Dense embedding (sentence-transformers, all-MiniLM-L6-v2)    │
+  │        │     ├─ Multi-dim indexing: each chunk indexed per relevant dim       │
+  │        │     │   (weight >= 0.15, ~1.5-2x doc expansion)                     │
+  │        │     └─ Client-side metadata filtering (ticker, dimension)           │
+  │        │                                                                     │
+  │        └──► BM25 Sparse Index                                                │
+  │              ├─ Seeded from CS2Evidence objects (seed_from_evidence)          │
+  │              ├─ Pickle cache with 24hr TTL                                   │
+  │              └─ Multi-seed query approach (~500 doc limit)                    │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  HybridRetriever (hybrid.py)                                                 │
+  │                                                                              │
+  │  Query ──┬──► Dense Search (VectorStore.search)  ──┐                        │
+  │          │                                          ├──► RRF Fusion          │
+  │          └──► Sparse Search (BM25Okapi)         ──┘    (dense=0.6,          │
+  │                                                         sparse=0.4)          │
+  │                                                          │                   │
+  │                                                          ▼                   │
+  │                                              RetrievedDocument list          │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  Phase 7 — Justification Generation
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  GET /api/v1/rag/justify/{ticker}/{dimension}                                │
+  │                                                                              │
+  │  1. Fetch dimension score ──────────────────────── ScoringRepository         │
+  │  2. Get rubric criteria ────────────────────────── CS3Client (static data)   │
+  │  3. Build search query from rubric keywords                                  │
+  │  4. Retrieve evidence ──────────────────────────── HybridRetriever           │
+  │  5. Match evidence to rubric keywords ──────────── CitedEvidence objects     │
+  │  6. Identify gaps (next-level criteria not met)                              │
+  │  7. LLM generation ────────────────────────────── ModelRouter (DeepSeek)     │
+  │                                                                              │
+  │  Output: ScoreJustification                                                  │
+  │    ├─ confidence_interval (from DB)                                          │
+  │    ├─ evidence_strength (strong/moderate/weak)                               │
+  │    ├─ supporting_evidence (CitedEvidence list)                               │
+  │    └─ gaps_identified (next-level criteria)                                  │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  Guardrails:
+  ┌──────────────────────┬──────────────────────────────────────────────────────┐
+  │  INPUT GUARDS         │  validate_ticker (regex, uppercase 1-10 chars)      │
+  │  input_guards.py      │  validate_question (10-500 chars, injection detect) │
+  │                       │  validate_dimension (against DIMENSIONS enum)       │
+  ├──────────────────────┼──────────────────────────────────────────────────────┤
+  │  OUTPUT GUARDS        │  check_answer_length (20-2000 chars)                │
+  │  output_guards.py     │  check_answer_grounded (disclaimer if no evidence) │
+  │                       │  check_no_refusal (fallback for LLM refusals)      │
+  └──────────────────────┴──────────────────────────────────────────────────────┘
+
+  Phase 8 — Chatbot & IC Prep
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  GET /api/v1/rag/chatbot/{ticker}?q=...                                      │
+  │                                                                              │
+  │  Question ──► Input Guards ──► HybridRetriever ──► Claude Haiku (LLM)       │
+  │                                                         │                    │
+  │                                                         ▼                    │
+  │                                              Output Guards ──► Answer        │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  GET /api/v1/rag/ic-prep/{ticker}          ic_prep.py                        │
+  │                                                                              │
+  │  1. Fetch company metadata from DB                                           │
+  │  2. Generate 7 dimension justifications in parallel (asyncio.gather)         │
+  │  3. Identify strengths (level >= 4), gaps (level <= 2), risk factors         │
+  │  4. Generate IC recommendation: PROCEED / CAUTION / FURTHER DILIGENCE       │
+  │                                                                              │
+  │  Output: IC package (7 justifications + strengths + gaps + recommendation)   │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  ━━━━━━━━━━━━━━━━━━━━ CS5: MULTI-AGENT DUE DILIGENCE ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Phase 9 — LangGraph Agent Workflow
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  POST /api/v1/dd/run/{ticker}                                                │
+  │  assessment_type: screening | limited | full                                 │
+  │                                                                              │
+  │  DueDiligenceState (TypedDict):                                              │
+  │    company_id, assessment_type, requested_by                                 │
+  │    sec_analysis, talent_analysis, scoring_result                             │
+  │    evidence_justifications, value_creation_plan                              │
+  │    next_agent, requires_approval, approval_status                            │
+  │    messages: List[AgentMessage]  (append-only via operator.add)              │
+  │                                                                              │
+  │  Checkpointing: MemorySaver (thread-based, supports HITL resume)             │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+                                      │
+                                      ▼
+    ┌─────────────────────────────────────────────────────────────────────────┐
+    │  SUPERVISOR NODE (conditional router — sequential stage dispatch)       │
+    │  supervisor.py                                                          │
+    └────────────────────────────────────┬────────────────────────────────────┘
+                                         │
+    ┌────────────────────────────────────▼────────────────────────────────────┐
+    │  1. SEC ANALYST NODE                                         [always]   │
+    │     └─ MCPToolCaller.get_company_evidence(limit=10)                     │
+    │     └─ LLM summarise (ModelRouter, task: "evidence_extraction")         │
+    │     └─ Optional: Mem0 context recall (cross-session memory)             │
+    │     ──► writes state["sec_analysis"]                                    │
+    └────────────────────────────────────┬────────────────────────────────────┘
+                                         │
+    ┌────────────────────────────────────▼────────────────────────────────────┐
+    │  2. SCORER NODE                                              [always]   │
+    │     └─ MCPToolCaller.calculate_org_air_score()                          │
+    │        └─ CompositeScoringRepository (SCORING table)                    │
+    │     └─ HITL gate if org_air > 85 or < 40                               │
+    │     ──► writes state["scoring_result"], sets requires_approval          │
+    └────────────────────────────────────┬────────────────────────────────────┘
+                                         │
+    ┌────────────────────────────────────▼────────────────────────────────────┐
+    │  3. EVIDENCE NODE                              [limited | full only]     │
+    │     └─ MCPToolCaller.get_company_evidence (3 dims:                      │
+    │        data_infrastructure, talent, use_case_portfolio)                  │
+    │     └─ Filter to technology_hiring signals                              │
+    │     └─ LLM summarise                                                    │
+    │     ──► writes state["talent_analysis"] + state["evidence_justif..."]   │
+    └────────────────────────────────────┬────────────────────────────────────┘
+                                         │
+    ┌────────────────────────────────────▼────────────────────────────────────┐
+    │  4. VALUE CREATOR NODE                              [full only]          │
+    │     ├─ MCPToolCaller.run_gap_analysis()                                 │
+    │     │   └─ GapAnalyzer -> dimension gaps + priorities + actions         │
+    │     ├─ MCPToolCaller.project_ebitda_impact()                            │
+    │     │   └─ EBITDACalculator -> scenarios {conservative, base, optimistic│
+    │     ├─ HITL gate if risk_adjusted EBITDA >= 50%                         │
+    │     └─ LLM narrative (ModelRouter, task: "ic_summary")                  │
+    │     ──► writes state["value_creation_plan"], sets requires_approval     │
+    └────────────────────────────────────┬────────────────────────────────────┘
+                                         │
+    ┌────────────────────────────────────▼────────────────────────────────────┐
+    │  5. HITL APPROVAL NODE                         [if requires_approval]   │
+    │     └─ interrupt(payload) ──► graph pauses                              │
+    │     └─ Resume: POST /api/v1/dd/approve/{thread_id}                     │
+    │        └─ Command(resume={decision, approved_by, comments})             │
+    └────────────────────────────────────┬────────────────────────────────────┘
+                                         │
+    ┌────────────────────────────────────▼────────────────────────────────────┐
+    │  6. COMPLETE NODE                                                       │
+    │     └─ set completed_at ──► END                                         │
+    │     └─ Record AssessmentSnapshot (history_service)                      │
+    │     └─ Store Mem0 semantic memory                                       │
+    └─────────────────────────────────────────────────────────────────────────┘
+
+  ━━━━━━━━━━━━━━━━━━━━━━━ CS5: MCP TOOL SERVER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  MCP stdio server (app/mcp/server.py) — 6 tools, 2 resources, 2 prompts
+  Lazy init: expensive clients (Snowflake, ChromaDB) only on first tool call
+
+  ┌──────────────────────┬─────────────────────────────┬──────────────────────────────────────┐
+  │       Tool           │          Source              │             Purpose                   │
+  ├──────────────────────┼─────────────────────────────┼──────────────────────────────────────┤
+  │ calculate_org_air_   │ SCORING table (Snowflake)   │ Org-AI-R + V^R + H^R + dims + CI     │
+  │   score              │                             │                                       │
+  ├──────────────────────┼─────────────────────────────┼──────────────────────────────────────┤
+  │ get_company_         │ /rag/evidence/{ticker}      │ Evidence items (optional dim filter)   │
+  │   evidence           │  (FastAPI HTTP)             │                                       │
+  ├──────────────────────┼─────────────────────────────┼──────────────────────────────────────┤
+  │ generate_            │ /rag/justify/{ticker}/{dim} │ Score justification with gaps          │
+  │   justification      │  (FastAPI HTTP)             │                                       │
+  ├──────────────────────┼─────────────────────────────┼──────────────────────────────────────┤
+  │ project_ebitda_      │ EBITDACalculator (local)    │ Sector-adjusted EBITDA delta           │
+  │   impact             │                             │  + HR risk factor + scenarios          │
+  ├──────────────────────┼─────────────────────────────┼──────────────────────────────────────┤
+  │ run_gap_analysis     │ GapAnalyzer (local)         │ Dimension gaps, priorities, actions    │
+  ├──────────────────────┼─────────────────────────────┼──────────────────────────────────────┤
+  │ get_portfolio_       │ CS3_PORTFOLIO iteration     │ Fund-AI-R, per-company summary         │
+  │   summary            │                             │                                       │
+  └──────────────────────┴─────────────────────────────┴──────────────────────────────────────┘
+
+  MCPToolCaller (agents/specialists.py) mirrors MCP tool dispatch via HTTP
+  ──► single source of truth for business logic
+
+  ━━━━━━━━━━━━━━━━━━━━━━ CS5: VALUE CREATION ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  EBITDACalculator (ebitda.py)                                                │
+  │                                                                              │
+  │  score_improvement = target_score - entry_score                              │
+  │                                                                              │
+  │  Sector multipliers (bps per Org-AI-R point):                                │
+  │    Tech=0.45  FinServ=0.38  Healthcare=0.35  Mfg=0.30  Retail=0.28           │
+  │                                                                              │
+  │  Implementation cost (% revenue per point):                                  │
+  │    Tech=0.08  FinServ=0.12  Healthcare=0.15  etc.                            │
+  │                                                                              │
+  │  ebitda_impact = score_improvement x sector_multiplier                       │
+  │  impl_cost    = score_improvement x cost_factor                              │
+  │  net_impact   = ebitda_impact - impl_cost                                    │
+  │                                                                              │
+  │  H^R Risk Adjustment:                                                        │
+  │    hr_risk_factor = min(1.0, max(0.5, h_r_score / 80))                       │
+  │    H^R > 70 -> low risk (minimal adjustment)                                 │
+  │    H^R < 50 -> high risk (50% floor)                                         │
+  │                                                                              │
+  │  adjusted_net = net_impact x hr_risk_factor                                  │
+  │                                                                              │
+  │  Time-to-Value: <=10pt=12mo, <=20pt=18mo, <=30pt=24mo, >30pt=36mo            │
+  │  Confidence: <=15pt + H^R>=60 -> high, <=25pt -> medium, >25pt -> low        │
+  │                                                                              │
+  │  Output: EBITDAProjection                                                    │
+  │    ├─ scenarios {conservative, base, optimistic}                             │
+  │    ├─ time_to_value_months                                                   │
+  │    └─ confidence {high, medium, low}                                         │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  GapAnalyzer (gap_analysis.py)                                               │
+  │                                                                              │
+  │  Improvement priority:                                                       │
+  │    data_infrastructure (1) -> talent (2) -> technology_stack (3)             │
+  │    -> ai_governance (4) -> leadership (5) -> use_case_portfolio (6)          │
+  │    -> culture (7)                                                            │
+  │                                                                              │
+  │  For each dimension:                                                         │
+  │    current_score -> target_score (proportional to total gap)                 │
+  │    gap = target - current                                                    │
+  │    next-level criteria from CS3Client static rubric                          │
+  │    improvement actions from per-dimension/level actions_map                  │
+  │                                                                              │
+  │  Output: GapAnalysisResult                                                   │
+  │    ├─ dimensions (sorted by gap size)                                        │
+  │    └─ top_priorities (top 3 by gap)                                          │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  ━━━━━━━━━━━━━━━━━━━━━━ CS5: REPORTING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  ICMemoGenerator (ic_memo.py)                                                │
+  │                                                                              │
+  │  Generates IC memo as PDF (WeasyPrint) with .txt fallback                    │
+  │  Includes:                                                                   │
+  │    ├─ Org-AI-R, V^R, H^R scores                                              │
+  │    ├─ 7 dimension score breakdown                                            │
+  │    ├─ Gap analysis results                                                   │
+  │    ├─ EBITDA scenario projections                                            │
+  │    ├─ Recommendation: PROCEED / MONITOR / CONDITIONAL                        │
+  │    └─ Confidential marking + colored recommendation boxes                    │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  LPLetterGenerator (lp_letter.py)                                            │
+  │                                                                              │
+  │  Quarterly LP update (.docx / .txt)                                          │
+  │  Includes:                                                                   │
+  │    ├─ Portfolio performance summary                                          │
+  │    ├─ Quarterly deltas (Org-AI-R change)                                     │
+  │    ├─ Highlights and key developments                                        │
+  │    └─ Next steps and outlook                                                 │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  ━━━━━━━━━━━━━━━━━━ CS5: ANALYTICS & TRACKING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  FundAIRCalculator (fund_air.py)                                             │
+  │                                                                              │
+  │  Fund-AI-R = EV-weighted average of portfolio Org-AI-R scores                │
+  │                                                                              │
+  │  Output: CS5FundMetrics                                                      │
+  │    ├─ fund_air (composite fund score)                                        │
+  │    ├─ company_count                                                          │
+  │    ├─ quartile_distribution (sector-specific benchmarks)                     │
+  │    ├─ sector_hhi (concentration index)                                       │
+  │    ├─ ai_leaders (org_air >= 70)                                             │
+  │    ├─ ai_laggards (0 < org_air < 50)                                         │
+  │    ├─ avg_delta_since_entry                                                  │
+  │    └─ total_ev_mm                                                            │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  AssessmentHistoryService (history_service.py)                               │
+  │                                                                              │
+  │  AssessmentSnapshot: point-in-time capture                                   │
+  │    (org_air, vr, hr, synergy, dimension_scores, confidence_interval)         │
+  │                                                                              │
+  │  AssessmentTrend: current org_air, entry org_air                             │
+  │    delta_since_entry, delta_30d, delta_90d, trend_direction                  │
+  │                                                                              │
+  │  In-memory cache (max 100 companies, 50 snapshots each)                      │
+  │  Optional Snowflake persistence via AssessmentSnapshotRepository             │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  InvestmentTracker (investment_tracker.py)                                   │
+  │                                                                              │
+  │  ROI computation:                                                            │
+  │    revenue_lift (%) + EBITDA_lift (%) + multiple_expansion (%)               │
+  │                                                                              │
+  │  Output: PortfolioROI                                                        │
+  │    (total_projected_return_mm, roi_pct, scenario breakdown)                  │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  ━━━━━━━━━━━━━━━━━━━━━━ CS5: STREAMLIT DASHBOARD ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  streamlit run streamlit/cs5_app.py  ->  http://localhost:8501
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │  Sidebar                                                                     │
+  │    ├─ fetch_available_companies() -> GET /api/v1/companies/all               │
+  │    ├─ Portfolio multiselect (session_state)                                  │
+  │    └─ DD runner (assessment_type selector)                                   │
+  │                                                                              │
+  │  Page 1: Portfolio Overview                                                  │
+  │    ├─ Fund-AI-R metrics                                                      │
+  │    ├─ Scatter: org_air vs sector                                             │
+  │    ├─ Bar: quartile distribution                                             │
+  │    └─ Company metrics table                                                  │
+  │                                                                              │
+  │  Page 2: Company Deep Dive                                                   │
+  │    ├─ 7 justification panels per company                                     │
+  │    ├─ Evidence cards (evidence_display.py)                                   │
+  │    └─ Dimension table (score, level, confidence_interval)                    │
+  │                                                                              │
+  │  Page 3: Value Creation                                                      │
+  │    ├─ Gap table (dimension, current, target, gap, priority)                  │
+  │    ├─ EBITDA scenarios {conservative, base, optimistic}                      │
+  │    └─ Improvement roadmap                                                    │
+  │                                                                              │
+  │  Page 4: IC Prep                                                             │
+  │    ├─ IC memo generation (PDF via WeasyPrint)                                │
+  │    └─ Download button (PDF / .txt)                                           │
+  │                                                                              │
+  │  Page 5: Agentic Due Diligence                                               │
+  │    ├─ Assessment type selector {screening, limited, full}                    │
+  │    ├─ POST /api/v1/dd/run/{ticker}                                           │
+  │    ├─ Monitor execution (poll status)                                        │
+  │    └─ Approval dialog (if paused at HITL gate)                               │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+  ━━━━━━━━━━━━━━━━━━━━ CS5: DATA STORES & OBSERVABILITY ━━━━━━━━━━━━━━━━━━━━━━━
+
+  ┌─────────────┬──────────────────────────────────────────────────────────────┐
+  │  Store      │  Role                                                        │
+  ├─────────────┼──────────────────────────────────────────────────────────────┤
+  │  Snowflake  │  Companies, documents, signals, scores, assessments          │
+  ├─────────────┼──────────────────────────────────────────────────────────────┤
+  │  Redis      │  Response cache (5-min TTL) + background task state          │
+  ├─────────────┼──────────────────────────────────────────────────────────────┤
+  │  AWS S3     │  Raw/parsed/chunked SEC filings, signal data, results JSON   │
+  ├─────────────┼──────────────────────────────────────────────────────────────┤
+  │  ChromaDB   │  Dense vector store + BM25 sparse index for RAG              │
+  └─────────────┴──────────────────────────────────────────────────────────────┘
+
+  Observability:
+    ├─ Prometheus counters/histograms (@track_mcp_tool, @track_agent decorators)
+    ├─ structlog with JSON format + correlation ID on every log entry
+    ├─ X-Correlation-ID header on all HTTP requests/responses
+    └─ Health endpoints: GET /healthz (liveness), GET /health (dependency check)
 

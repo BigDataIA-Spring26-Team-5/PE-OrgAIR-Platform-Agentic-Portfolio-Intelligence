@@ -13,7 +13,7 @@ import os
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, Query, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
 
 from app.core.dependencies import (
@@ -58,6 +58,9 @@ async def compute_roi(
     entry_org_air: Optional[float] = Query(
         None, description="Optional override for entry Org-AI-R score"
     ),
+    entry_price: Optional[float] = Query(
+        None, description="Optional override for entry price (not required for ROI estimate)"
+    ),
     composite_repo=Depends(get_composite_scoring_repository),
     snapshot_repo=Depends(get_assessment_snapshot_repository),
 ):
@@ -79,7 +82,12 @@ async def compute_roi(
         except Exception:
             entry = None
 
-    roi = investment_tracker.compute_roi(ticker_u, current_org_air=current_org_air, entry_org_air=entry)
+    roi = investment_tracker.compute_roi(
+        ticker_u,
+        current_org_air=current_org_air,
+        entry_org_air=entry,
+        entry_price=entry_price,
+    )
     return roi.to_dict()
 
 
@@ -99,10 +107,15 @@ async def recall_memory(
     return payload
 
 
-@router.post("/reports/ic-memo/{ticker}", summary="Generate IC memo (.pdf) for a company")
+@router.post("/reports/ic-memo/{ticker}", summary="Generate IC memo (.docx) for a company")
 async def generate_ic_memo(
     ticker: str,
     target_org_air: float = Query(85.0, description="Target Org-AI-R for gap analysis / value creation"),
+    format: str = Query(
+        "docx",
+        description="Output format: docx (recommended), pdf, or txt",
+        pattern="^(docx|pdf|txt)$",
+    ),
     persist: bool = Query(
         True,
         description=(
@@ -152,9 +165,11 @@ async def generate_ic_memo(
         h_r_score=float(scoring_result["hr_score"] or 0.0),
     )
 
+    fmt = (format or "docx").lower().strip()
+    ext = "docx" if fmt not in ("pdf", "txt") else fmt
     out_path = os.path.join(
         _reports_subdir("ic_memo"),
-        f"ic_memo_{ticker_u}_{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}.pdf",
+        f"ic_memo_{ticker_u}_{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}.{ext}",
     )
     path = ic_memo_generator.generate(
         company_id=ticker_u,
@@ -162,13 +177,21 @@ async def generate_ic_memo(
         gap_analysis=gap_analysis,
         ebitda_projection=ebitda_projection,
         output_path=out_path,
+        output_format=fmt,
     )
 
     if not persist:
         if background is None:
             background = BackgroundTasks()
         background.add_task(_safe_remove, path)
-    return FileResponse(path, filename=os.path.basename(path), background=background)
+    media_type = None
+    if path.lower().endswith(".docx"):
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif path.lower().endswith(".pdf"):
+        media_type = "application/pdf"
+    elif path.lower().endswith(".txt"):
+        media_type = "text/plain"
+    return FileResponse(path, filename=os.path.basename(path), background=background, media_type=media_type)
 
 
 @router.post("/reports/lp-letter/{fund_id}", summary="Generate LP letter (.pdf) for a fund")
@@ -187,10 +210,18 @@ async def generate_lp_letter(
     from app.services.reporting.lp_letter import lp_letter_generator
     from app.services.analytics.fund_air import FundAIRCalculator
     from types import SimpleNamespace
+    import traceback as _tb
 
     fund_id = (fund_id or "PE-FUND-I").strip()
-    portfolio = portfolio_svc.get_portfolio_view(fund_id)
+
+    try:
+        portfolio = portfolio_svc.get_portfolio_view(fund_id)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Portfolio '{fund_id}' not found or inaccessible: {exc}")
+
     companies = portfolio.get("companies", [])
+    if not companies:
+        raise HTTPException(status_code=422, detail=f"Portfolio '{fund_id}' has no companies. Add companies first.")
 
     # Calculate CS5 fund metrics
     company_objs = [
@@ -202,8 +233,12 @@ async def generate_lp_letter(
         )
         for c in companies
     ]
-    metrics = FundAIRCalculator().calculate_fund_metrics(fund_id, company_objs)
-    metrics_dict = metrics.to_dict()
+
+    try:
+        metrics = FundAIRCalculator().calculate_fund_metrics(fund_id, company_objs)
+        metrics_dict = metrics.to_dict()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Fund metrics calculation failed: {exc}")
 
     company_scores = [
         {"ticker": c.get("ticker"), "org_air": float(c.get("org_air") or 0.0), "sector": c.get("sector") or ""}
@@ -213,14 +248,18 @@ async def generate_lp_letter(
 
     out_path = os.path.join(
         _reports_subdir("lp_letter"),
-        f"lp_letter_{fund_id}_{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}.pdf",
+        f"lp_letter_{fund_id}_{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}.docx",
     )
-    path = lp_letter_generator.generate(
-        fund_id=fund_id,
-        fund_metrics=metrics_dict,
-        company_scores=company_scores,
-        output_path=out_path,
-    )
+
+    try:
+        path = lp_letter_generator.generate(
+            fund_id=fund_id,
+            fund_metrics=metrics_dict,
+            company_scores=company_scores,
+            output_path=out_path,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"LP letter generation failed: {exc}\n{_tb.format_exc()}")
 
     if not persist:
         if background is None:

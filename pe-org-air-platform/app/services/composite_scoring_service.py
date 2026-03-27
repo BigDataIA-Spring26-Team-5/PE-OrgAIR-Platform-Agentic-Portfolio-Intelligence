@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 # Constants
 # =====================================================================
 
-from app.config.company_mappings import CS3_PORTFOLIO  # noqa: E402
 
 EXPECTED_TC_VR_RANGES = {
     "NVDA": {"tc": (0.05, 0.20), "pf": (0.7, 1.0),  "vr": (80, 100)},

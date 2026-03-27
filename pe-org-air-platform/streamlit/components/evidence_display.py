@@ -17,7 +17,13 @@ import pandas as pd
 import requests
 from typing import Dict, List, Optional, Any
 
-BASE_URL = "http://localhost:8000"
+try:
+    # streamlit/utils/ is on sys.path (added by cs5_app.py path surgery)
+    from api_base import api_base_url
+
+    BASE_URL = api_base_url()
+except Exception:
+    BASE_URL = "http://localhost:8000"
 
 DIMENSIONS = [
     "data_infrastructure",
@@ -257,7 +263,6 @@ def render_company_evidence_panel(
                         If None, shows interactive fetch UI.
     """
     ticker = company_id
-    st.header(f"Evidence Analysis: {ticker}")
 
     cache_key_all = f"justifications_{ticker}"
 

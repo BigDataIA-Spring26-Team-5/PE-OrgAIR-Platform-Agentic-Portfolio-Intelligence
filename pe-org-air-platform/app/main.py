@@ -215,6 +215,37 @@ app.add_middleware(
 app.add_middleware(CorrelationIdMiddleware)
 
 
+# ── Prometheus request tracking middleware ─────────────────────────────────
+_CS_ROUTE_MAP = {
+    "/api/v1/companies": ("cs1", "/companies"),
+    "/api/v1/portfolios": ("cs1", "/portfolio"),
+    "/api/v1/documents": ("cs2", "/documents"),
+    "/api/v1/signals": ("cs2", "/signals"),
+    "/api/v1/scoring": ("cs3", "/scores"),
+    "/api/v1/assessments": ("cs3", "/assessment"),
+    "/api/v1/rag": ("cs4", "/justify"),
+    "/api/v1/history": ("cs3", "/history"),
+    "/api/v1/dd": ("cs3", "/dd"),
+}
+
+
+@app.middleware("http")
+async def prometheus_tracking_middleware(request: Request, call_next):
+    """Track every API request as a CS client call in Prometheus."""
+    response = await call_next(request)
+    try:
+        from app.services.observability.metrics import _inc_cs
+        path = request.url.path
+        for prefix, (svc, ep) in _CS_ROUTE_MAP.items():
+            if path.startswith(prefix):
+                status = "success" if response.status_code < 400 else "error"
+                _inc_cs(svc, ep, status)
+                break
+    except Exception:
+        pass
+    return response
+
+
 # ── Exception Handlers ────────────────────────────────────────────────────
 
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
@@ -307,6 +338,8 @@ async def prometheus_metrics():
     """Prometheus scrape endpoint for CS5 observability."""
     try:
         from prometheus_client import generate_latest, CONTENT_TYPE_LATEST  # type: ignore
+        # Ensure all CS5 metrics are registered (pre-initializes label combos)
+        import app.services.observability.metrics  # noqa: F401
     except ModuleNotFoundError:
         return JSONResponse(
             status_code=503,

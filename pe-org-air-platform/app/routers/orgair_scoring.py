@@ -7,13 +7,12 @@ Endpoints:
   GET  /api/v1/assessments/{ticker}           — Read-only assessment in CompanyAssessmentRead shape
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from typing import Any, Callable, Dict, List, Optional
 from uuid import UUID
 import logging
 import time
 
-from app.config.company_mappings import CS3_PORTFOLIO
 from app.core.dependencies import (
     get_company_repository,
     get_composite_scoring_repository,
@@ -63,9 +62,17 @@ router = APIRouter(prefix="/api/v1/scoring", tags=["CS3 Org-AI-R"])
 )
 async def generate_results(
     svc=Depends(get_composite_scoring_service),
+    company_repo=Depends(get_company_repository),
 ):
     """Generate results JSON files for CS3 submission."""
-    result = svc.compute_full_pipeline(CS3_PORTFOLIO)
+    rows = company_repo.get_all()
+    tickers = [str(r.get("ticker") or "").upper() for r in rows or [] if r.get("ticker")]
+    if not tickers:
+        raise HTTPException(
+            status_code=400,
+            detail="No companies found in the companies table. Ingest/register companies before generating results.",
+        )
+    result = svc.compute_full_pipeline(tickers)
     return ResultsGenerationResponse(
         status="success",
         files_generated=result["files_generated"],
@@ -118,7 +125,10 @@ async def score_portfolio_orgair(
             except Exception:
                 continue
     elif req and req.fund_id:
-        tickers = portfolio_svc.get_portfolio_tickers(req.fund_id)
+        try:
+            tickers = portfolio_svc.get_portfolio_tickers(req.fund_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     else:
         # Default: score the companies the platform knows about (companies table).
         # This avoids arbitrary tickers that aren't in Snowflake and therefore
@@ -130,7 +140,10 @@ async def score_portfolio_orgair(
             end_idx = start_idx + int(req.limit) if req.limit else None
             tickers = tickers[start_idx:end_idx]
         if not tickers:
-            tickers = list(CS3_PORTFOLIO)
+            raise HTTPException(
+                status_code=400,
+                detail="No companies found in the companies table. Provide tickers or ingest/register companies first.",
+            )
 
     async def _maybe_await(fn: Callable, *args, **kwargs) -> Any:
         out = fn(*args, **kwargs)

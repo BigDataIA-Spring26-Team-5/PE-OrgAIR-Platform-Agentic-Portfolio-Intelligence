@@ -99,6 +99,24 @@ class CultureSignal:
         return json.dumps(d, indent=indent, default=str)
 
 
+def _no_data_culture_signal(company_id: str, ticker: str) -> CultureSignal:
+    """Return an explicit 'no data' culture signal (all scores 0, confidence 0)."""
+    return CultureSignal(
+        company_id=company_id,
+        ticker=ticker,
+        innovation_score=Decimal("0.00"),
+        data_driven_score=Decimal("0.00"),
+        change_readiness_score=Decimal("0.00"),
+        ai_awareness_score=Decimal("0.00"),
+        overall_score=Decimal("0.00"),
+        review_count=0,
+        avg_rating=Decimal("0.00"),
+        current_employee_ratio=Decimal("0.000"),
+        confidence=Decimal("0.000"),
+        scoring_method="no_data",
+    )
+
+
 # =====================================================================
 # COMPANY REGISTRY
 # =====================================================================
@@ -1556,8 +1574,8 @@ class CultureCollector:
             groq_signal = self._groq_estimate_culture_scores(ticker, company_name)
             if groq_signal:
                 return groq_signal
-            logger.warning(f"[{ticker}] Groq estimate also failed — returning hardcoded defaults")
-            return CultureSignal(company_id=company_id, ticker=ticker)
+            logger.warning(f"[{ticker}] Groq estimate also failed — returning no_data culture signal")
+            return _no_data_culture_signal(company_id=company_id, ticker=ticker)
 
         original_count = len(reviews)
         reviews = self._deduplicate_reviews(reviews)
@@ -1580,7 +1598,7 @@ class CultureCollector:
             groq_signal = self._groq_estimate_culture_scores(ticker, company_name)
             if groq_signal:
                 return groq_signal
-            return CultureSignal(company_id=company_id, ticker=ticker)
+            return _no_data_culture_signal(company_id=company_id, ticker=ticker)
 
         # ── Pre-Phase: Groq company-specific keyword expansion ────
         # Expand all 6 culture keyword groups once per (ticker, dimension)

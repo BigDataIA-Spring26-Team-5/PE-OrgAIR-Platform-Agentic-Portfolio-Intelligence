@@ -8,7 +8,7 @@ from typing import Dict, List, Any, Optional, Tuple
 
 from app.services.integration.cs3_client import CS3Client, DIMENSIONS
 from app.services.composite_scoring_service import (
-    COMPANY_SECTORS, MARKET_CAP_PERCENTILES, CS3_PORTFOLIO,
+    COMPANY_SECTORS, MARKET_CAP_PERCENTILES,
 )
 
 logger = logging.getLogger(__name__)
@@ -161,7 +161,8 @@ class FundAIRCalculator:
         """
         if self.cs3 is None:
             raise RuntimeError("calculate() requires cs3_client; use calculate_fund_metrics() instead.")
-        tickers = tickers or list(CS3_PORTFOLIO)
+        if not tickers:
+            raise ValueError("tickers is required (no hardcoded portfolio fallback).")
         company_metrics: List[CompanyMetric] = []
 
         # Get scores and EV weights

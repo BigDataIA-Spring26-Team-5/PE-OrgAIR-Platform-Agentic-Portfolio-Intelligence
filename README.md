@@ -113,6 +113,10 @@ The platform is preconfigured with 20+ companies in `COMPANY_NAME_MAPPINGS` (inc
 
 ## 3. Architecture
 
+### Architecture Diagram
+
+![CS5 Architecture Diagram](architecture.svg)
+
 The platform runs as a single FastAPI server with 18 routers. CS1–CS3 routers handle data collection and scoring. CS4 adds the `/rag` router for indexing, retrieval, justification, and IC prep. CS5 adds the `/dd` router for the LangGraph agent workflow with HITL approval.
 
 The platform follows a strict four-layer architecture:

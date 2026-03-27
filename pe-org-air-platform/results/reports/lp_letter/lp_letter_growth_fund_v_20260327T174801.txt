@@ -1,0 +1,36 @@
+Dear Limited Partners,
+
+We are pleased to share the quarterly AI Readiness update for growth_fund_v.
+
+FUND PERFORMANCE SUMMARY
+-------------------------
+Fund-AI-R Score:     62.3 / 100
+Portfolio Companies: 7
+AI Leaders (≥70):    1
+AI Laggards (<50):   1
+
+PORTFOLIO HIGHLIGHTS
+--------------------
+  • NVDA: Org-AI-R 84.9 (Leader)
+  • JPM: Org-AI-R 66.8 (Developing)
+  • CRM: Org-AI-R 61.5 (Developing)
+  • GOOGL: Org-AI-R 60.2 (Developing)
+  • WMT: Org-AI-R 60.0 (Developing)
+  • ADP: Org-AI-R 54.3 (Developing)
+  • UNH: Org-AI-R 48.1 (Developing)
+
+VALUE CREATION PIPELINE
+------------------------
+  • NVDA leads the portfolio at 84.9 Org-AI-R. Gap analysis identifies data infrastructure and talent as primary value levers.
+
+Our agentic due diligence platform continues to surface actionable insights
+across the portfolio. The Org-AI-R framework identifies specific improvement
+vectors for each company, enabling precise capital deployment decisions.
+
+We remain committed to driving AI-readiness across the portfolio and look
+forward to sharing further progress in our next update.
+
+Sincerely,
+The Investment Team
+growth_fund_v
+March 27, 2026

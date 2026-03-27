@@ -1,4 +1,8 @@
-"""Prometheus metrics and instrumentation decorators for CS5."""
+"""Prometheus metrics and instrumentation decorators for CS5.
+
+Metrics are pre-initialized with all known label combinations so they
+appear in /metrics immediately (not just after the first call).
+"""
 from __future__ import annotations
 
 import functools
@@ -9,6 +13,14 @@ from typing import Callable, Any
 from prometheus_client import Counter, Histogram
 
 logger = logging.getLogger(__name__)
+
+# Known label combinations for pre-initialization
+_MCP_TOOLS = [
+    "calculate_org_air_score", "get_company_evidence", "generate_justification",
+    "project_ebitda_impact", "run_gap_analysis", "get_portfolio_summary",
+]
+_AGENTS = ["sec_analyst", "scorer", "evidence_agent", "value_creator", "supervisor"]
+_CS_SERVICES = [("cs1", "/portfolio"), ("cs2", "/evidence"), ("cs3", "/scores"), ("cs4", "/justify")]
 
 # ── MCP Tool Metrics ─────────────────────────────────────────────────────────
 
@@ -55,6 +67,25 @@ cs_client_calls_total = Counter(
     "Total CS client service calls",
     ["service", "endpoint", "status"],
 )
+
+
+# ── Pre-initialize all label combinations so /metrics shows them ──────────
+def _init_metrics():
+    for tool in _MCP_TOOLS:
+        mcp_tool_calls_total.labels(tool_name=tool, status="success")
+        mcp_tool_calls_total.labels(tool_name=tool, status="error")
+        mcp_tool_duration_seconds.labels(tool_name=tool)
+    for agent in _AGENTS:
+        agent_invocations_total.labels(agent_name=agent, status="success")
+        agent_invocations_total.labels(agent_name=agent, status="error")
+        agent_duration_seconds.labels(agent_name=agent)
+    hitl_approvals_total.labels(reason="score_change", decision="approved")
+    hitl_approvals_total.labels(reason="score_change", decision="rejected")
+    for svc, ep in _CS_SERVICES:
+        cs_client_calls_total.labels(service=svc, endpoint=ep, status="success")
+        cs_client_calls_total.labels(service=svc, endpoint=ep, status="error")
+
+_init_metrics()
 
 
 # ── Decorators ───────────────────────────────────────────────────────────────

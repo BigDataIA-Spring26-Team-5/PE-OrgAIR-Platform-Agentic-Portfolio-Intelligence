@@ -147,13 +147,84 @@ class LPLetterGenerator:
             date=date_str,
         )
 
-        HTML = self._try_weasyprint()
         path = output_path or f"lp_letter_{fund_id}_{datetime.now().strftime('%Y%m%d')}.pdf"
 
+        # Try docx first (most reliable on Windows), then weasyprint PDF, then .txt
+        try:
+            from docx import Document
+            from docx.shared import Pt, Inches, RGBColor
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+            docx_path = path.replace(".pdf", ".docx")
+            doc = Document()
+            style = doc.styles["Normal"]
+            style.font.name = "Calibri"
+            style.font.size = Pt(11)
+
+            # Header
+            h = doc.add_paragraph()
+            h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = h.add_run("CONFIDENTIAL - FOR LIMITED PARTNERS ONLY")
+            run.font.size = Pt(9)
+            run.font.color.rgb = RGBColor(220, 38, 38)
+            run.bold = True
+
+            title = doc.add_heading(f"Quarterly LP Update: {fund_id}", level=1)
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+            doc.add_paragraph(f"Date: {date_str}")
+            doc.add_paragraph("Dear Limited Partners,")
+            doc.add_paragraph(
+                f"We are pleased to share the quarterly AI Readiness update for {fund_id}."
+            )
+
+            doc.add_heading("Fund Performance Summary", level=2)
+            perf = doc.add_table(rows=4, cols=2)
+            perf.style = "Light Grid Accent 1"
+            for i, (label, val) in enumerate([
+                ("Fund-AI-R Score", f"{fund_air:.1f} / 100"),
+                ("Portfolio Companies", str(len(company_scores))),
+                ("AI Leaders (>=70)", str(leaders)),
+                ("AI Laggards (<50)", str(laggards)),
+            ]):
+                perf.rows[i].cells[0].text = label
+                perf.rows[i].cells[1].text = val
+
+            doc.add_heading("Portfolio Highlights", level=2)
+            for c in sorted_companies:
+                status = "Leader" if c.get("org_air", 0) >= 70 else "Developing" if c.get("org_air", 0) >= 50 else "Laggard"
+                doc.add_paragraph(
+                    f"{c.get('ticker', '?')}: Org-AI-R {c.get('org_air', 0):.1f} ({status})",
+                    style="List Bullet",
+                )
+
+            doc.add_heading("Value Creation Outlook", level=2)
+            doc.add_paragraph(value_creation.strip().lstrip("• "))
+
+            doc.add_heading("Outlook", level=2)
+            doc.add_paragraph(
+                "We remain confident in the fund's AI transformation trajectory. "
+                "Our systematic Org-AI-R assessment methodology provides data-driven "
+                "visibility into each portfolio company's AI readiness, enabling targeted "
+                "value creation initiatives."
+            )
+
+            sig = doc.add_paragraph()
+            sig.add_run("\n\nSincerely,\nGrowth Fund V Management Team")
+
+            doc.save(docx_path)
+            logger.info("LP letter saved to %s (docx)", docx_path)
+            return docx_path
+        except ImportError:
+            logger.warning("python-docx not installed — trying weasyprint or .txt fallback")
+        except Exception as exc:
+            logger.warning("docx generation failed: %s — trying fallback", exc)
+
+        HTML = self._try_weasyprint()
         if HTML is None:
             logger.warning("weasyprint not installed — saving as .txt")
             txt_path = path.replace(".pdf", ".txt")
-            with open(txt_path, "w") as f:
+            with open(txt_path, "w", encoding="utf-8") as f:
                 f.write(letter)
             logger.info("LP letter saved to %s", txt_path)
             return txt_path
@@ -202,7 +273,7 @@ class LPLetterGenerator:
         except Exception as exc:
             logger.exception("LP letter PDF generation failed; falling back to text: %s", exc)
             txt_path = path.replace(".pdf", ".txt")
-            with open(txt_path, "w") as f:
+            with open(txt_path, "w", encoding="utf-8") as f:
                 f.write(letter)
             return txt_path
 

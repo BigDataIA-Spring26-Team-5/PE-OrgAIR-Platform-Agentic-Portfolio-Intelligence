@@ -1,5 +1,5 @@
-﻿"""
-PE Org-AI-R Platform â€” CS5 Agentic Portfolio Intelligence Dashboard
+"""
+PE Org-AI-R Platform  -  CS5 Agentic Portfolio Intelligence Dashboard
 streamlit/cs5_app.py
 
 Run:
@@ -9,7 +9,7 @@ Run:
 from __future__ import annotations
 
 # ============================================================================
-# sys.path surgery â€” MUST run before any other import.
+# sys.path surgery  -  MUST run before any other import.
 #
 # Problem: Streamlit adds the script directory AND '' (CWD) to sys.path
 # before the user script runs.  When the script lives in streamlit/ and the
@@ -46,16 +46,19 @@ sys.path = [p for p in sys.path if _norm(p) != _HERE_NORM]
 if os.path.normcase(_ROOT) not in [_norm(p) for p in sys.path]:
     sys.path.insert(0, _ROOT)
 
-# Only components/ at the back â€” no app.py there, no shadowing
-if os.path.normcase(_COMPONENTS) not in [_norm(p) for p in sys.path]:
-    sys.path.append(_COMPONENTS)
+# Only components/ at the back  -  no app.py there, no shadowing
+_UTILS = os.path.join(_HERE, "utils")
+
+for _extra in (_COMPONENTS, _UTILS):
+    if os.path.normcase(_extra) not in [_norm(p) for p in sys.path]:
+        sys.path.append(_extra)
 
 # Evict any wrong `app` that Streamlit or page-discovery may have cached
 _cached_app = sys.modules.get("app")
 if _cached_app is not None:
     _cached_file = os.path.normcase(getattr(_cached_app, "__file__", "") or "")
     if _HERE_NORM in _cached_file or not _cached_file:
-        # Wrong module â€” remove it and any submodules that depended on it
+        # Wrong module  -  remove it and any submodules that depended on it
         to_del = [k for k in list(sys.modules) if k == "app" or k.startswith("app.")]
         for k in to_del:
             del sys.modules[k]
@@ -76,9 +79,9 @@ except ImportError:
     pass
 
 # Reads API_BASE_URL / FASTAPI_URL from `pe-org-air-platform/.env`
-from utils.api_base import api_base_url  # noqa: E402
+from api_base import api_base_url  # noqa: E402
 
-# evidence_display lives in components/ which is on sys.path â€” import directly
+# evidence_display lives in components/ which is on sys.path  -  import directly
 from evidence_display import (  # noqa: E402
     render_company_evidence_panel,
     fetch_all_justifications,
@@ -160,11 +163,10 @@ def fetch_available_companies() -> list[dict]:
     return companies
 
 # ============================================================================
-# Page config â€” must be the FIRST st.* call
+# Page config  -  must be the FIRST st.* call
 # ============================================================================
 st.set_page_config(
-    page_title="PE OrgAIR · CS5 Portfolio Intelligence",
-    page_icon="🏦",
+    page_title="PE OrgAIR  CS5 Portfolio Intelligence",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -186,7 +188,7 @@ for _k, _v in _ss_defaults.items():
 
 
 # ============================================================================
-# Sidebar â€” Portfolio Selector (loads companies from Snowflake)
+# Sidebar  -  Portfolio Selector (loads companies from Snowflake)
 # ============================================================================
 with st.sidebar:
     st.markdown("### Portfolio Configuration")
@@ -306,7 +308,7 @@ with st.sidebar:
         "Select portfolio companies",
         options=all_tickers,
         default=default_tickers,
-        format_func=lambda t: f"{t} â€” {ticker_to_name.get(t, t)}",
+        format_func=lambda t: f"{t}  -  {ticker_to_name.get(t, t)}",
         help="Choose companies from your Snowflake companies table",
         key="portfolio_multiselect",
     )
@@ -338,7 +340,7 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # â”€â”€ Quick Due Diligence Runner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    #  Quick Due Diligence Runner 
     st.markdown("### Run Due Diligence")
     dd_ticker = st.text_input(
         "Ticker", value="NVDA", key="dd_ticker_input",
@@ -351,7 +353,7 @@ with st.sidebar:
         key="dd_type_input",
         help="screening=fastest, full=all 4 agents",
     )
-    if st.button("â–¶ Run DD Workflow", key="sidebar_run_dd", type="primary",
+    if st.button(" Run DD Workflow", key="sidebar_run_dd", type="primary",
                  use_container_width=True):
         if dd_ticker:
             st.session_state["sidebar_dd_running"] = True
@@ -382,11 +384,11 @@ with st.sidebar:
 
     if st.session_state.get("sidebar_dd_result"):
         r = st.session_state["sidebar_dd_result"]
-        st.success(f"âœ“ DD complete â€” {r['ticker']}")
+        st.success(f" DD complete  -  {r['ticker']}")
         st.markdown(f"**Org-AI-R:** `{r.get('org_air', 'N/A')}`")
         st.markdown(f"**V^R:** `{r.get('vr_score', 'N/A')}`  |  **H^R:** `{r.get('hr_score', 'N/A')}`")
         if r.get("requires_approval"):
-            st.warning(f"âš  HITL â€” {r.get('approval_status')} by {r.get('approved_by')}")
+            st.warning(f" HITL  -  {r.get('approval_status')} by {r.get('approved_by')}")
         else:
             st.info("HITL: not triggered")
         if r.get("narrative"):
@@ -620,7 +622,7 @@ _load_scores = _load_portfolio  # backward-compat alias
 # ============================================================================
 def page_portfolio() -> None:
     portfolio = st.session_state.get("portfolio", _DEFAULT_PORTFOLIO)
-    st.title("Portfolio Overview â€” Org-AI-R Intelligence")
+    st.title("Portfolio Overview  -  Org-AI-R Intelligence")
     st.caption(f"Showing {len(portfolio)} selected companies.")
 
     # Sidebar: fund_id input
@@ -647,7 +649,7 @@ def page_portfolio() -> None:
 
     st.markdown("---")
     st.markdown("### V^R vs H^R Quadrant Analysis")
-    st.caption("Bubble size = Org-AI-R Â· Dashed lines at threshold 60")
+    st.caption("Bubble size = Org-AI-R  Dashed lines at threshold 60")
 
     if not scored.empty:
         fig = px.scatter(
@@ -702,7 +704,7 @@ def page_evidence() -> None:
 
     selected = st.sidebar.selectbox(
         "Company", tickers, index=idx,
-        format_func=lambda t: f"{t} â€” {next((c['name'] for c in portfolio if c['ticker']==t), t)}",
+        format_func=lambda t: f"{t}  -  {next((c['name'] for c in portfolio if c['ticker']==t), t)}",
         key="evidence_ticker_select",
     )
     st.session_state["selected_ticker"] = selected
@@ -710,7 +712,7 @@ def page_evidence() -> None:
     # CS5 spec: fetch justifications first, then pass to panel
     # Uses session_state cache to avoid re-fetching on every rerun
     cache_key = f"justifications_{selected}"
-    justifications = st.session_state.get(cache_key)  # None on first load â†’ shows generate UI
+    justifications = st.session_state.get(cache_key)  # None on first load  shows generate UI
     render_company_evidence_panel(selected, justifications)
 
 
@@ -720,7 +722,7 @@ def page_evidence() -> None:
 def page_workflow() -> None:
     st.title("Agentic Due-Diligence Workflow")
     st.caption(
-        "Runs the full LangGraph supervisor â†’ specialist agents pipeline. "
+        "Runs the full LangGraph supervisor  specialist agents pipeline. "
         "Triggers HITL approval automatically when thresholds are exceeded."
     )
 
@@ -732,7 +734,7 @@ def page_workflow() -> None:
     with col_sel:
         ticker = st.selectbox(
             "Company", tickers,
-            format_func=lambda t: f"{t} â€” {next((c['name'] for c in portfolio if c['ticker']==t), t)}",
+            format_func=lambda t: f"{t}  -  {next((c['name'] for c in portfolio if c['ticker']==t), t)}",
             index=tickers.index(default_wf) if default_wf in tickers else 0,
             key="workflow_ticker_select",
         )
@@ -854,18 +856,18 @@ def _run_workflow(ticker: str, assessment_type: str) -> None:
 
 def _show_result(result: dict) -> None:
     st.markdown("---")
-    st.markdown(f"### Results â€” **{result['ticker']}** ({result['assessment_type']})")
+    st.markdown(f"### Results  -  **{result['ticker']}** ({result['assessment_type']})")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Org-AI-R",    f"{result['org_air']:.2f}")
     c2.metric("V^R",         f"{result['vr_score']:.2f}")
     c3.metric("H^R",         f"{result['hr_score']:.2f}")
-    c4.metric("HITL Status", result["approval_status"] or "â€”")
+    c4.metric("HITL Status", result["approval_status"] or " - ")
     c5.metric("Messages",    result["messages_count"])
     if result.get("delta_air") is not None:
         st.markdown("#### Value Creation Plan")
         vc1, vc2 = st.columns(2)
         vc1.metric("Delta AI-R",      f"{result['delta_air']:.4f}")
-        vc2.metric("Risk-Adj EBITDA", str(result.get("risk_adjusted", "â€”")))
+        vc2.metric("Risk-Adj EBITDA", str(result.get("risk_adjusted", " - ")))
     if result.get("narrative"):
         with st.expander("IC Narrative", expanded=True):
             st.write(result["narrative"])
@@ -893,7 +895,7 @@ def _load_history(ticker: str, days: int = 365) -> dict:
 
 def page_history() -> None:
     st.title("Assessment History")
-    st.caption("Task 9.4 â€” snapshots captured during DD runs.")
+    st.caption("Task 9.4  -  snapshots captured during DD runs.")
 
     portfolio = st.session_state.get("portfolio", _DEFAULT_PORTFOLIO)
     tickers = [co["ticker"] for co in portfolio]
@@ -942,22 +944,22 @@ def page_history() -> None:
 
 
 # ============================================================================
-# Navigation â€” called before any rendering to suppress Streamlit's
+# Navigation  -  called before any rendering to suppress Streamlit's
 # auto-discovery of other .py files in the same directory.
 # ============================================================================
 
 pg = st.navigation(
     {
         "CS5 Agentic Portfolio": [
-            st.Page(page_portfolio, title="Portfolio Overview", icon="ðŸ“Š", default=True),
-            st.Page(page_evidence,  title="Evidence Analysis",  icon="ðŸ”"),
-            st.Page(page_workflow,  title="Agentic Workflow",   icon="ðŸ¤–"),
-            st.Page(page_history,   title="History",            icon="ðŸ•’"),
+            st.Page(page_portfolio, title="Portfolio Overview", default=True),
+            st.Page(page_evidence,  title="Evidence Analysis",  ),
+            st.Page(page_workflow,  title="Agentic Workflow",   ),
+            st.Page(page_history,   title="History",            ),
         ]
     }
 )
 
-# â”€â”€ CSS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  CSS 
 st.markdown("""
 <style>
 .stButton > button[kind="primary"],button[kind="primary"] {
@@ -981,7 +983,7 @@ footer { visibility:hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-# â”€â”€ Sidebar extra content â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  Sidebar extra content 
 with st.sidebar:
     st.markdown("""
     <div style="display:flex;align-items:center;gap:10px;padding-bottom:14px;
@@ -991,7 +993,7 @@ with st.sidebar:
                   font-size:14px;font-weight:700;color:#fff;flex-shrink:0;">PE</div>
       <div>
         <div style="font-size:16px;font-weight:700;">OrgAIR Platform</div>
-        <div style="font-size:12px;opacity:0.55;">CS5 Â· Agentic Intelligence</div>
+        <div style="font-size:12px;opacity:0.55;">CS5  Agentic Intelligence</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -999,11 +1001,11 @@ with st.sidebar:
                 'letter-spacing:0.06em;">Portfolio Companies</span>',
                 unsafe_allow_html=True)
     for co in st.session_state.get("portfolio", _DEFAULT_PORTFOLIO):
-        st.caption(f"{co['ticker']} â€” {co['name']}")
+        st.caption(f"{co['ticker']}  -  {co['name']}")
     st.divider()
     if st.button("Refresh Data", key="btn_refresh", use_container_width=True, type="secondary"):
         st.cache_data.clear()
         st.rerun()
-    st.caption("PE Org-AI-R Platform Â· CS5")
+    st.caption("PE Org-AI-R Platform  CS5")
 
 pg.run()

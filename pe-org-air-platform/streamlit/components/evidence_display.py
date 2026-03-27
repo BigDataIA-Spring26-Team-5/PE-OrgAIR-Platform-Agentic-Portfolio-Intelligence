@@ -18,8 +18,8 @@ import requests
 from typing import Dict, List, Optional, Any
 
 try:
-    # When used inside CS5, `streamlit/` is on sys.path.
-    from utils.api_base import api_base_url
+    # streamlit/utils/ is on sys.path (added by cs5_app.py path surgery)
+    from api_base import api_base_url
 
     BASE_URL = api_base_url()
 except Exception:
